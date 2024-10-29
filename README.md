@@ -1,5 +1,5 @@
 # nasp-key-value-engine
-Grupni projekat iz predmeta ,,Napredni algoritmi i strukture podataka"
+Grupni projekat iz predmeta ,,Napredni algoritmi i strukture podatakaʻʻ
 
 # Folder tree
 
