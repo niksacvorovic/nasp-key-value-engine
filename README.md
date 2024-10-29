@@ -3,6 +3,7 @@ Grupni projekat iz predmeta ,,Napredni algoritmi i strukture podataka"
 
 # Folder tree
 
+```
 NAiSP
 ├── data
 │   ├── stored_data.json          # Data stored on the disk
@@ -15,4 +16,5 @@ NAiSP
 │   └── hyperloglog.go
 ├── utils
 │   ├── argparser.go
-└── main.go          
+└── main.go
+```      
