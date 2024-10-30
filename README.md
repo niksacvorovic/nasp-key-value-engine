@@ -4,17 +4,22 @@ Grupni projekat iz predmeta ,,Napredni algoritmi i strukture podatakaʻʻ
 # Folder tree
 
 ```
-NAiSP
+NAiSP                               # Root folder
 ├── data
-│   ├── stored_data.json          # Data stored on the disk
-│   └── read_write_functions.go   # Functions for reading and writing data on the disk
-├── bin      
-│   └── bin_serialization.bin     # Binary Serializtions
+│   ├── JSON
+│   │   └── data.json               # JSON data
+│   └── bin
+│       └── bin_serialization.bin   # Binary data
 ├── structs
-│   ├── bloom.go                  
-│   ├── minsketch.go              
-│   └── hyperloglog.go
+│   ├── probabilistic
+│   │   ├── bloom.go                # Bloom filter
+│   │   ├── minshetch.go            # Count min sketch
+│   │   └── hyperloglog.go          # Hyper log log
+│   └── log
+│       └──  log.go
 ├── utils
-│   ├── argparser.go
-└── main.go
+│   ├── argparser.go                # Argument parser
+│   ├── read.go                     # Functions for reading data
+│   └── write.go                    # Functions for storing data
+└── main.go                         # Main function to run the project
 ```      
