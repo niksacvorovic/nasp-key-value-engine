@@ -1,4 +1,4 @@
-package bloomfilter
+package structs
 
 import (
 	"crypto/md5"
