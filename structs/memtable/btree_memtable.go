@@ -12,4 +12,3 @@ func NewBTreeMemtable(maxSize int) *BTreeMemtable {
 }
 
 // Implementacija metoda za BTreeMemtable (Add, Delete, Get, PrintData, LoadFromWAL)
-// Ovde dodajte odgovarajuce metode kada bude potrebna potpuna implementacija.
