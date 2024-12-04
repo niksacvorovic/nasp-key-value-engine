@@ -12,4 +12,3 @@ func NewSkipListMemtable(maxSize int) *SkipListMemtable {
 }
 
 // Implementacija metoda za SkipListMemtable (Add, Delete, Get, PrintData, LoadFromWAL)
-// Ovde dodajte odgovarajuce metode kada bude potrebna potpuna implementacija.
