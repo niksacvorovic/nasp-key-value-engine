@@ -1,6 +1,6 @@
 package config
 
-// Struct to match the JSON structure
+// Struktura koja se podudara sa JSON strukturom
 type Config struct {
 	MaxMemtableSize   int     `json:"MaxMemtableSize"`
 	Num_memtables     int     `json:"Num_memtables"`
