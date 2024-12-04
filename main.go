@@ -5,38 +5,65 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"encoding/json"
+	"io/ioutil"
+	"log"
 
 	"projekat/structs/wal"
 	"projekat/structs/memtable"
+	"projekat/config"
 )
 
 func main() {
 
-	// Definisanje putanje do log fajla i velicine segmenta
+	// Citanje config.json fajla
+	data, err := ioutil.ReadFile("config/config.json")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Inicijalizuj Config strukturu
+	var cfg config.Config
+
+	// Unmarshal the JSON data into the Config struct
+	err = json.Unmarshal(data, &cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Definisanje putanje do log fajla
 	walFilePath := "wal.log"
-	maxSegmentSize := 10
-	maxMemtableSize := 10
 
 	// Inicijalizuj WAL
-	wal, err := wal.NewWAL(walFilePath, maxSegmentSize)
+	wal, err := wal.NewWAL(walFilePath, cfg.WALmaxSegmentSize)
 	if err != nil {
 		fmt.Printf("Greska prilikom inicijalizovanja WAL: %v\n", err)
 		return
 	}
 	defer wal.Close()
 
-	// Inicijalizacija memtable i popunjavanje sa podacima iz WAL
-	memtable := memtable.NewMemtable(maxMemtableSize)
-	err = memtable.LoadFromWAL(walFilePath)
+	var memtableInstance  memtable.MemtableInterface
+
+	// Inicijalizacija Memtable-a
+	if(cfg.Memtable_struct == "hashMap") {
+		memtableInstance  = memtable.NewHashMapMemtable(cfg.MaxMemtableSize)
+		fmt.Println("hashMap")
+	} else if (cfg.Memtable_struct == "skipList") {
+		// NewSkipListMemtable
+		fmt.Println("skipList")
+
+	} else if (cfg.Memtable_struct == "BStablo") {
+		// NewBStabloMemtable
+		fmt.Println("BStablo")
+	}
+
+
+	// Ucitavanje podataka is WAL-a u Memtable
+	err = memtableInstance.LoadFromWAL(walFilePath)
 	if err != nil {
 		fmt.Println("Greska pri ucitavanju iz WAL-a", err)
 		return
 	}
-
-	// TEMP
-	// Prikaz sadrzaja Memtable-a
-	memtable.PrintData()
-	fmt.Println()
 
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// Interfejs petlja
@@ -58,7 +85,7 @@ func main() {
 		input := strings.TrimSpace(scanner.Text())
 
 		// Podela komande na delove
-		parts := strings.Fields(input)
+		parts := strings.Fields(input)	
 
 		if len(parts) == 0 {
 			continue
@@ -89,7 +116,7 @@ func main() {
 			if err != nil {
 				fmt.Printf("Greska prilikom pisanja u WAL: %v\n", err)
 			} else {
-				err = memtable.Add(parts[1], parts[2])
+				err = memtableInstance.Add(parts[1], parts[2])
 				if err != nil {
 					fmt.Printf("Greska prilikom pisanja u Memtable: %v\n", err)
 				} else {
@@ -109,7 +136,7 @@ func main() {
 			}
 			
 			// Pretrazi Memtable po zadatom kljucu
-			value, found := memtable.Get(parts[1])
+			value, found := memtableInstance.Get(parts[1])
 			if found {
 				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
 			} else {
@@ -129,7 +156,7 @@ func main() {
 
 			// Konverzija kljuca u []byte, tombstone je true
 			key := []byte(parts[1])
-			value, found := memtable.Get(parts[1])
+			value, found := memtableInstance.Get(parts[1])
 			tombstone := true
 
 			// Izbrisi iz WAL-a i Memtable-a
@@ -138,7 +165,7 @@ func main() {
 				if err != nil {
 					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
 				} else {
-					err := memtable.Delete(parts[1])
+					err := memtableInstance.Delete(parts[1])
 					if err != nil {
 						fmt.Printf("Greska prilikom brisanja iz Memtable-a: %v\n", err)
 					} else {
@@ -162,10 +189,6 @@ func main() {
 
 		case "EXIT":
 			fmt.Println("Dovidjenja!")
-			// TEMP
-			// Prikaz sadrzaja Memtable-a
-			fmt.Println()
-			memtable.PrintData()
 			return
 
 		default:
