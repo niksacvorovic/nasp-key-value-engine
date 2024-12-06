@@ -1,10 +1,15 @@
 package memtable
 
-// MemtableInterface definise zajednicki interfejs za sve implementacije Memtable-a
-type MemtableInterface interface {
-	Add(key, value string) error
-	Delete(key string) error
-	Get(key string) (string, bool)
-	PrintData()
-	LoadFromWAL(walPath string) error
+import (
+	"projekat/structs/containers"
+)
+
+type Memtable struct {
+	ContainerInstance containers.Container
 }
+
+func Add(key, value string) error
+func Delete(key string) error
+func Get(key string) (string, bool)
+func PrintData()
+func LoadFromWAL(walPath string) error
