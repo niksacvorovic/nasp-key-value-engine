@@ -1,23 +1,29 @@
 package blockmanager
 
-import(
+import (
 	"errors"
 	"os"
 )
 
 // BlockManager struktura
 type BlockManager struct {
-	blockSize int
+	blockCache *BlockCache
+	blockSize  int
 }
 
 // Funckija koja vraća novi Block Manager
 func NewBlockManager(blockSize int) *BlockManager {
-	return &BlockManager {blockSize: blockSize,}
+	return &BlockManager{blockSize: blockSize}
 }
 
 // Funckija za citanje blokova
-func (bm * BlockManager) ReadBlock(filePath string, blockIndex int) ([]byte) {
+func (bm *BlockManager) ReadBlock(filePath string, blockIndex int) []byte {
+	sign := Signature{filePath, blockIndex}
 
+	blockptr, ok := bm.blockCache.hash[sign]
+	if ok {
+		return blockptr.data
+	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		panic(err)
@@ -25,12 +31,12 @@ func (bm * BlockManager) ReadBlock(filePath string, blockIndex int) ([]byte) {
 	defer file.Close()
 
 	data := make([]byte, bm.blockSize)
-	_, err = file.ReadAt(data, int64(blockIndex * bm.BlockSize))
+	_, err = file.ReadAt(data, int64(blockIndex*bm.blockSize))
 	if err != nil {
 		panic(err)
 	}
 
-	return data 
+	return data
 }
 
 // Funkcija za pisanje blokova
@@ -46,10 +52,12 @@ func (bm *BlockManager) WriteBlock(filePath string, blockIndex int, data []byte)
 	}
 	defer file.Close()
 
-	_, err = file.WriteAt(data, int64(blockIndex * bm.BlockSize))
+	_, err = file.WriteAt(data, int64(blockIndex*bm.blockSize))
 	if err != nil {
 		panic(err)
 	}
 
+	sign := Signature{filePath, blockIndex}
+	bm.blockCache.hash[sign].data = data
 	return nil
 }
