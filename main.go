@@ -2,16 +2,17 @@ package main
 
 import (
 	"bufio"
-	"fmt"
-	"os"
-	"strings"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
+	"strings"
 
-	"projekat/structs/wal"
-	"projekat/structs/memtable"
 	"projekat/config"
+	"projekat/structs/containers"
+	"projekat/structs/memtable"
+	"projekat/structs/wal"
 )
 
 func main() {
@@ -42,21 +43,20 @@ func main() {
 	}
 	defer wal.Close()
 
-	var memtableInstance  memtable.MemtableInterface
+	var memtableInstance *memtable.Memtable
 
 	// Inicijalizacija Memtable-a
-	if(cfg.Memtable_struct == "hashMap") {
-		memtableInstance  = memtable.NewHashMapMemtable(cfg.MaxMemtableSize)
+	if cfg.Memtable_struct == "hashMap" {
+		memtableInstance = &memtable.Memtable{ContainerInstance: containers.CreateHM()}
 		fmt.Println("hashMap")
-	} else if (cfg.Memtable_struct == "skipList") {
+	} else if cfg.Memtable_struct == "skipList" {
 		// NewSkipListMemtable
 		fmt.Println("skipList")
 
-	} else if (cfg.Memtable_struct == "BStablo") {
+	} else if cfg.Memtable_struct == "BStablo" {
 		// NewBStabloMemtable
 		fmt.Println("BStablo")
 	}
-
 
 	// Ucitavanje podataka is WAL-a u Memtable
 	err = memtableInstance.LoadFromWAL(walFilePath)
@@ -85,12 +85,12 @@ func main() {
 		input := strings.TrimSpace(scanner.Text())
 
 		// Podela komande na delove
-		parts := strings.Fields(input)	
+		parts := strings.Fields(input)
 
 		if len(parts) == 0 {
 			continue
 		}
-		
+
 		// Parsiranje komande
 		command := strings.ToUpper(parts[0])
 
@@ -107,7 +107,7 @@ func main() {
 			}
 
 			// Konverzija kljuca i vrednosti u []byte, tombstone je false
-			key := []byte(parts[1])
+			key := parts[1]
 			value := []byte(parts[2])
 			tombstone := false
 
@@ -127,14 +127,14 @@ func main() {
 		// --------------------------------------------------------------------------------------------------------------------------
 		// GET komanda
 		// --------------------------------------------------------------------------------------------------------------------------
-		
+
 		// GET komanda ocekuje 1 argument: key
 		case "GET":
 			if len(parts) != 2 {
 				fmt.Println("Greska: GET zahteva <key>")
 				continue
 			}
-			
+
 			// Pretrazi Memtable po zadatom kljucu
 			value, found := memtableInstance.Get(parts[1])
 			if found {
