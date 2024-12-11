@@ -6,4 +6,5 @@ type Config struct {
 	Num_memtables     int     `json:"Num_memtables"`
 	Memtable_struct   string  `json:"Memtable_struct"`
 	WALmaxSegmentSize int     `json:"WALmaxSegmentSize"`
+	BlockSize         int     `json:"BlockSize"`
 }
