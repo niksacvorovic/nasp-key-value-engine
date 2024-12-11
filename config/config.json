@@ -2,5 +2,6 @@
     "MaxMemtableSize": 50,
     "Num_memtables": 5,
     "Memtable_struct": "hashMap", 
-    "WALmaxSegmentSize": 50
+    "WALmaxSegmentSize": 50,
+    "BlockSize": 4096
 }
