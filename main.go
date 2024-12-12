@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"projekat/config"
+	"projekat/structs/blockmanager"
 	"projekat/structs/containers"
 	"projekat/structs/memtable"
 	"projekat/structs/wal"
@@ -43,11 +44,14 @@ func main() {
 	}
 	defer wal.Close()
 
-	var memtableInstance *memtable.Memtable
+	// Inicijalizacija BlockManager-a
+	bm := blockmanager.NewBlockManager(cfg.BlockSize)
+
+	var memtableInstance memtable.MemtableInterface
 
 	// Inicijalizacija Memtable-a
 	if cfg.Memtable_struct == "hashMap" {
-		memtableInstance = &memtable.Memtable{ContainerInstance: containers.CreateHM()}
+		memtableInstance = containers.NewHashMapMemtable(cfg.MaxMemtableSize, bm)
 		fmt.Println("hashMap")
 	} else if cfg.Memtable_struct == "skipList" {
 		// NewSkipListMemtable
@@ -57,6 +61,14 @@ func main() {
 		// NewBStabloMemtable
 		fmt.Println("BStablo")
 	}
+
+	// Inicijalizacija fajla
+	file, err := os.Create(cfg.FilePath)
+	if err != nil {
+		panic(err)
+	}
+	file.Truncate(16 * int64(cfg.BlockSize))
+	file.Close()
 
 	// Ucitavanje podataka is WAL-a u Memtable
 	err = memtableInstance.LoadFromWAL(walFilePath)
@@ -107,7 +119,7 @@ func main() {
 			}
 
 			// Konverzija kljuca i vrednosti u []byte, tombstone je false
-			key := parts[1]
+			key := []byte(parts[1])
 			value := []byte(parts[2])
 			tombstone := false
 

@@ -1,7 +1,8 @@
 {
-    "MaxMemtableSize": 50,
+    "MaxMemtableSize": 2,
     "Num_memtables": 5,
     "Memtable_struct": "hashMap", 
-    "WALmaxSegmentSize": 50,
-    "BlockSize": 4096
+    "WALmaxSegmentSize": 5,
+    "BlockSize": 4096,
+    "FilePath": "file.data"
 }

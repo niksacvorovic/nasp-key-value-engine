@@ -11,13 +11,13 @@ import (
 
 // Struktura Zapisa
 type Record struct {
-    CRC       uint32 // CRC
-    Timestamp int64  // Vreme
-    Tombstone bool   // Grob
-    KeySize   uint8  // Velicina kljuca
-    ValueSize uint8  // Velicina vrednsoti
-    Key       []byte // Kljuc
-    Value     []byte // Vrednost
+	CRC       uint32 // CRC
+	Timestamp int64  // Vreme
+	Tombstone bool   // Grob
+	KeySize   uint8  // Velicina kljuca
+	ValueSize uint8  // Velicina vrednsoti
+	Key       []byte // Kljuc
+	Value     []byte // Vrednost
 }
 
 // Struktura Write-Ahead Log-a (WAL)
