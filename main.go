@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"strings"
@@ -19,7 +18,7 @@ import (
 func main() {
 
 	// Citanje config.json fajla
-	data, err := ioutil.ReadFile("config/config.json")
+	data, err := os.ReadFile("config/config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,7 +53,7 @@ func main() {
 		memtableInstance = containers.NewHashMapMemtable(cfg.MaxMemtableSize, bm)
 		fmt.Println("hashMap")
 	} else if cfg.Memtable_struct == "skipList" {
-		// NewSkipListMemtable
+		memtableInstance = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize, bm)
 		fmt.Println("skipList")
 
 	} else if cfg.Memtable_struct == "BStablo" {

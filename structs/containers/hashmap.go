@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"os"
-	"sync"
 
 	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
@@ -16,7 +15,6 @@ import (
 type HashMapMemtable struct {
 	data         map[string][]byte
 	maxSize      int
-	mu           sync.RWMutex
 	blockManager *blockmanager.BlockManager
 }
 
@@ -31,9 +29,6 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 
 // Add dodaje par kljuc-vrednost u HashMapMemtable
 func (m *HashMapMemtable) Add(key, value string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if len(m.data) >= m.maxSize {
 		fmt.Println("Memtable reached max size, writing to BlockManager...")
 
@@ -64,11 +59,8 @@ func (m *HashMapMemtable) Add(key, value string) error {
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
 func (m *HashMapMemtable) Delete(key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if _, exists := m.data[key]; !exists {
-		return fmt.Errorf("Kljuc %s ne postoji u Memtable-u", key)
+		return fmt.Errorf("kljuc %s ne postoji u Memtable-u", key)
 	}
 	delete(m.data, key)
 	return nil
@@ -76,18 +68,12 @@ func (m *HashMapMemtable) Delete(key string) error {
 
 // Get dohvata vrednost prema kljucu iz HashMapMemtable-a
 func (m *HashMapMemtable) Get(key string) (string, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	value, exists := m.data[key]
 	return string(value), exists
 }
 
 // PrintData ispisuje sve podatke u HashMapMemtable-u
 func (m *HashMapMemtable) PrintData() {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
 	fmt.Println("Sadrzaj HashMapMemtable-a:")
 	for key, value := range m.data {
 		fmt.Printf("Kljuc: %s, Vrednost: %s\n", key, value)
@@ -103,7 +89,7 @@ func (m *HashMapMemtable) LoadFromWAL(walPath string) error {
 func loadFromWALHelper(walPath string, memtable memtable.MemtableInterface) error {
 	file, err := os.Open(walPath)
 	if err != nil {
-		return fmt.Errorf("Ne mogu otvoriti WAL fajl: %v", err)
+		return fmt.Errorf("ne mogu otvoriti WAL fajl: %v", err)
 	}
 	defer file.Close()
 
@@ -113,7 +99,7 @@ func loadFromWALHelper(walPath string, memtable memtable.MemtableInterface) erro
 			if err.Error() == "EOF" { // Kraj fajla
 				break
 			}
-			return fmt.Errorf("Greska pri citanju zapisa iz WAL-a: %v", err)
+			return fmt.Errorf("greska pri citanju zapisa iz WAL-a: %v", err)
 		}
 
 		if record.Tombstone {
@@ -174,7 +160,7 @@ func readRecord(file *os.File) (*wal.Record, error) {
 	data = append(data, value...)
 	calculatedCRC := crc32.ChecksumIEEE(data)
 	if calculatedCRC != crc {
-		return nil, fmt.Errorf("CRC ne odgovara")
+		return nil, fmt.Errorf("ne odgovara CRC")
 	}
 
 	return &wal.Record{

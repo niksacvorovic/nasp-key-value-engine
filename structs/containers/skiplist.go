@@ -2,7 +2,10 @@ package containers
 
 import (
 	"errors"
+	"fmt"
 	"math/rand"
+
+	"projekat/structs/blockmanager"
 )
 
 type Node struct {
@@ -15,6 +18,13 @@ type Node struct {
 type SkipList struct {
 	maxHeight int
 	levels    []Node
+}
+
+type SkipListMemtable struct {
+	data         *SkipList
+	size         int
+	maxSize      int
+	blockManager *blockmanager.BlockManager
 }
 
 func (s *SkipList) roll() int {
@@ -126,4 +136,94 @@ func (sl *SkipList) WriteElement(str string, value []byte) error {
 		}
 	}
 	return nil
+}
+
+func (sl *SkipList) DeleteElement(str string) error {
+	current := &sl.levels[sl.maxHeight-1]
+	for {
+		if current.Key == str {
+			break
+		}
+		if current.Next == nil {
+			if current.Down == nil {
+				break
+			}
+			current = current.Down
+		} else if current.Next.Key > str {
+			if current.Down == nil {
+				break
+			}
+			current = current.Down
+		} else {
+			current = current.Next
+		}
+	}
+	if current.Key == str {
+		current.Value = []byte{}
+		for current.Down != nil {
+			current = current.Down
+			current.Value = []byte{}
+		}
+		return nil
+	} else {
+		return errors.New("nonexistent value")
+	}
+}
+
+func NewSkipListMemtable(maxHeight, maxSize int, blockManager *blockmanager.BlockManager) *SkipListMemtable {
+	return &SkipListMemtable{
+		data:         CreateSL(maxHeight),
+		maxSize:      maxSize,
+		size:         0,
+		blockManager: blockManager,
+	}
+}
+
+func (m *SkipListMemtable) Add(key, value string) error {
+	if m.size >= m.maxSize {
+		fmt.Println("Memtable reached max size, writing to BlockManager...")
+
+		blockData := make([]byte, 0, m.maxSize*10)
+		current := &m.data.levels[m.data.maxHeight-1]
+		for current.Next != nil {
+			current = current.Next
+			keyLen := len(current.Key)
+			valueLen := len(current.Value)
+			blockData = append(blockData, byte(keyLen))
+			blockData = append(blockData, []byte(current.Key)...)
+			blockData = append(blockData, byte(valueLen))
+			blockData = append(blockData, current.Value...)
+		}
+		blockData = append(blockData, make([]byte, 4096-len(blockData))...)
+
+		err := m.blockManager.WriteBlock("file.data", 0, blockData)
+		if err != nil {
+			return fmt.Errorf("error writing to BlockManager: %v", err)
+		}
+
+		m.data = CreateSL(m.data.maxHeight)
+	}
+	err := m.data.WriteElement(key, []byte(value))
+	m.size++
+	return err
+}
+
+func (m *SkipListMemtable) Delete(key string) error {
+	err := m.data.DeleteElement(key)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *SkipListMemtable) Get(key string) (string, bool) {
+	value, exists := m.data.ReadElement(key)
+	if exists == nil {
+		return string(value), true
+	}
+	return "", false
+}
+
+func (m *SkipListMemtable) LoadFromWAL(walPath string) error {
+	return loadFromWALHelper(walPath, m)
 }

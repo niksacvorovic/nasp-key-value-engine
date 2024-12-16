@@ -10,7 +10,7 @@ type MemtableInterface interface {
 	Add(key, value string) error
 	Delete(key string) error
 	Get(key string) (string, bool)
-	PrintData()
+	// PrintData()
 	LoadFromWAL(walPath string) error
 }
 

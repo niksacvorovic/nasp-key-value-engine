@@ -2,6 +2,7 @@
     "MaxMemtableSize": 2,
     "Num_memtables": 5,
     "Memtable_struct": "hashMap", 
+    "SkipListLevelNum": 3,
     "WALmaxSegmentSize": 5,
     "BlockSize": 4096,
     "FilePath": "file.data"
