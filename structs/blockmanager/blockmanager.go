@@ -18,12 +18,7 @@ func NewBlockManager(blockSize int) *BlockManager {
 
 // Funckija za citanje blokova
 func (bm *BlockManager) ReadBlock(filePath string, blockIndex int) []byte {
-	sign := Signature{filePath, blockIndex}
 
-	blockptr, ok := bm.blockCache.hash[sign]
-	if ok {
-		return blockptr.data
-	}
 	file, err := os.Open(filePath)
 	if err != nil {
 		panic(err)
@@ -46,7 +41,7 @@ func (bm *BlockManager) WriteBlock(filePath string, blockIndex int, data []byte)
 		return errors.New("data size does not match block size")
 	}
 
-	file, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE, 0644)
+	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		panic(err)
 	}
@@ -57,7 +52,5 @@ func (bm *BlockManager) WriteBlock(filePath string, blockIndex int, data []byte)
 		panic(err)
 	}
 
-	sign := Signature{filePath, blockIndex}
-	bm.blockCache.hash[sign].data = data
 	return nil
 }

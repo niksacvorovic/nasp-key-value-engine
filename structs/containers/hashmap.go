@@ -16,6 +16,7 @@ type HashMapMemtable struct {
 	data         map[string][]byte
 	maxSize      int
 	blockManager *blockmanager.BlockManager
+	block_idx    int
 }
 
 // NewHashMapMemtable kreira novu instancu HashMapMemtable-a
@@ -24,11 +25,14 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 		data:         make(map[string][]byte),
 		maxSize:      maxSize,
 		blockManager: blockManager,
+		block_idx:    0,
 	}
 }
 
 // Add dodaje par kljuc-vrednost u HashMapMemtable
 func (m *HashMapMemtable) Add(key, value string) error {
+	m.data[key] = []byte(value)
+
 	if len(m.data) >= m.maxSize {
 		fmt.Println("Memtable reached max size, writing to BlockManager...")
 
@@ -44,16 +48,17 @@ func (m *HashMapMemtable) Add(key, value string) error {
 		}
 		blockData = append(blockData, make([]byte, 4096-len(blockData))...)
 
-		err := m.blockManager.WriteBlock("file.data", 0, blockData)
+		err := m.blockManager.WriteBlock("file.data", m.block_idx, blockData)
 		if err != nil {
 			return fmt.Errorf("error writing to BlockManager: %v", err)
 		}
+
+		m.block_idx += 1
 
 		// Ocisti memtable poslije upisivanja
 		m.data = make(map[string][]byte)
 	}
 
-	m.data[key] = []byte(value)
 	return nil
 }
 
