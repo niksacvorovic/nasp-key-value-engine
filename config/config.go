@@ -8,5 +8,6 @@ type Config struct {
 	SkipListLevelNum  int    `json:"SkipListLevelNum"`
 	WALmaxSegmentSize int    `json:"WALmaxSegmentSize"`
 	BlockSize         int    `json:"BlockSize"`
+	BlockCacheSize    int    `json:"BlockCacheSize"`
 	FilePath          string `json:"FilePath"`
 }

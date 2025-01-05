@@ -44,7 +44,7 @@ func main() {
 	defer wal.Close()
 
 	// Inicijalizacija BlockManager-a
-	bm := blockmanager.NewBlockManager(cfg.BlockSize)
+	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
 	var memtableInstance memtable.MemtableInterface
 

@@ -20,16 +20,24 @@ type BlockCache struct {
 	capacity int
 }
 
+func NewBlockCache(cap int) *BlockCache {
+	bc := BlockCache{nil, nil, make(map[Signature]*BlockNode), 0, cap}
+	return &bc
+}
+
 func (bc *BlockCache) AddToCache(path string, number int, data []byte) {
 	sign := Signature{path, number}
 	node := BlockNode{data, sign, bc.first, nil}
-	bc.first.next = &node
 	if bc.length == 0 {
 		bc.last = &node
+	} else {
+		bc.first.next = &node
 	}
+	bc.first = &node
 	bc.hash[sign] = &node
 	if bc.length == bc.capacity {
 		bc.last = bc.last.next
+		delete(bc.hash, bc.last.prev.blocksign)
 		bc.last.prev = nil
 	} else {
 		bc.length++
