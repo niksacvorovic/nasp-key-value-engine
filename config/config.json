@@ -1,8 +1,8 @@
 {
-    "MaxMemtableSize": 2,
+    "MaxMemtableSize": 5,
     "Num_memtables": 5,
-    "Memtable_struct": "hashMap", 
-    "SkipListLevelNum": 3,
+    "Memtable_struct": "skipList", 
+    "SkipListLevelNum": 5,
     "WALmaxSegmentSize": 5,
     "BlockSize": 4096,
     "BlockCacheSize": 20,

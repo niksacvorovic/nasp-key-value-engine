@@ -126,15 +126,15 @@ func (sl *SkipList) WriteElement(str string, value []byte) error {
 	if times > 0 {
 		upperNodes := make([]Node, times)
 		bttm := &newNode
-		for i := 0; i < len(upperNodes); i++ {
-			upperNodes[i] = Node{
+		for i := 1; i <= len(upperNodes); i++ {
+			upperNodes[i-1] = Node{
 				Key:   str,
 				Value: value,
-				Next:  stack[stackLen-1-i].Next,
+				Next:  stack[stackLen-i].Next,
 				Down:  bttm,
 			}
-			stack[stackLen-1-i].Next = &upperNodes[i]
-			bttm = &upperNodes[i]
+			stack[stackLen-i].Next = &upperNodes[i-1]
+			bttm = &upperNodes[i-1]
 		}
 	}
 	return nil

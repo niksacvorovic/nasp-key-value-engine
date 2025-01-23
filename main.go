@@ -144,6 +144,7 @@ func main() {
 					fmt.Println("Memtable reached max size, moving to next instance...")
 					mtIndex++
 					err = memtableInstances[mtIndex].Add(parts[1], parts[2])
+					fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
 				} else if err != nil && mtIndex == cfg.Num_memtables-1 {
 					fmt.Println("Serializing to SSTable...")
 					// ovde dodati logiku kojom se kreira SSTable
