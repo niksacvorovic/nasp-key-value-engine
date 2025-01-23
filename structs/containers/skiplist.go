@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 
 	"projekat/structs/blockmanager"
+	"projekat/structs/memtable"
 )
 
 type Node struct {
@@ -181,27 +183,7 @@ func NewSkipListMemtable(maxHeight, maxSize int, blockManager *blockmanager.Bloc
 
 func (m *SkipListMemtable) Add(key, value string) error {
 	if m.size >= m.maxSize {
-		fmt.Println("Memtable reached max size, writing to BlockManager...")
-
-		blockData := make([]byte, 0, m.maxSize*10)
-		current := &m.data.levels[m.data.maxHeight-1]
-		for current.Next != nil {
-			current = current.Next
-			keyLen := len(current.Key)
-			valueLen := len(current.Value)
-			blockData = append(blockData, byte(keyLen))
-			blockData = append(blockData, []byte(current.Key)...)
-			blockData = append(blockData, byte(valueLen))
-			blockData = append(blockData, current.Value...)
-		}
-		blockData = append(blockData, make([]byte, 4096-len(blockData))...)
-
-		err := m.blockManager.WriteBlock("file.data", 0, blockData)
-		if err != nil {
-			return fmt.Errorf("error writing to BlockManager: %v", err)
-		}
-
-		m.data = CreateSL(m.data.maxHeight)
+		return memtable.MemtableFull
 	}
 	err := m.data.WriteElement(key, []byte(value))
 	m.size++
@@ -224,6 +206,26 @@ func (m *SkipListMemtable) Get(key string) (string, bool) {
 	return "", false
 }
 
-func (m *SkipListMemtable) LoadFromWAL(walPath string) error {
-	return loadFromWALHelper(walPath, m)
+func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {
+	return memtable.LoadFromWALHelper(file, m, offset)
+}
+
+func (m *SkipListMemtable) Serialize() error {
+	blockData := make([]byte, 0, m.maxSize*10)
+	current := &m.data.levels[m.data.maxHeight-1]
+	for current.Next != nil {
+		current = current.Next
+		keyLen := len(current.Key)
+		valueLen := len(current.Value)
+		blockData = append(blockData, byte(keyLen))
+		blockData = append(blockData, []byte(current.Key)...)
+		blockData = append(blockData, byte(valueLen))
+		blockData = append(blockData, current.Value...)
+	}
+	blockData = append(blockData, make([]byte, 4096-len(blockData))...)
+	err := m.blockManager.WriteBlock("file.data", 0, blockData)
+	if err != nil {
+		return fmt.Errorf("error writing to BlockManager: %v", err)
+	}
+	return nil
 }

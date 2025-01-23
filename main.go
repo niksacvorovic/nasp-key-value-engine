@@ -46,14 +46,19 @@ func main() {
 	// Inicijalizacija BlockManager-a
 	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
-	var memtableInstance memtable.MemtableInterface
+	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
+	mtIndex := 0
 
-	// Inicijalizacija Memtable-a
+	// Inicijalizacija niza instanci Memtable-a
 	if cfg.Memtable_struct == "hashMap" {
-		memtableInstance = containers.NewHashMapMemtable(cfg.MaxMemtableSize, bm)
+		for i := 0; i < cfg.Num_memtables; i++ {
+			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize, bm)
+		}
 		fmt.Println("hashMap")
 	} else if cfg.Memtable_struct == "skipList" {
-		memtableInstance = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize, bm)
+		for i := 0; i < cfg.Num_memtables; i++ {
+			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize, bm)
+		}
 		fmt.Println("skipList")
 
 	} else if cfg.Memtable_struct == "BStablo" {
@@ -62,11 +67,26 @@ func main() {
 	}
 
 	// Ucitavanje podataka is WAL-a u Memtable
-	err = memtableInstance.LoadFromWAL(walFilePath)
+
+	var offset int64 = 0
+	file, err := os.Open(walFilePath)
 	if err != nil {
-		fmt.Println("Greska pri ucitavanju iz WAL-a", err)
-		return
+		fmt.Errorf("ne mogu otvoriti WAL fajl: %v", err)
 	}
+	for {
+		offset, err = memtableInstances[mtIndex].LoadFromWAL(file, offset)
+		if err == memtable.MemtableFull {
+			mtIndex++
+			continue
+		} else if err != nil {
+			fmt.Println("Greska pri ucitavanju iz WAL-a", err)
+			return
+		} else {
+			break
+		}
+	}
+
+	file.Close()
 
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// Interfejs petlja
@@ -119,9 +139,14 @@ func main() {
 			if err != nil {
 				fmt.Printf("Greska prilikom pisanja u WAL: %v\n", err)
 			} else {
-				err = memtableInstance.Add(parts[1], parts[2])
-				if err != nil {
-					fmt.Printf("Greska prilikom pisanja u Memtable: %v\n", err)
+				err = memtableInstances[mtIndex].Add(parts[1], parts[2])
+				if err != nil && mtIndex != cfg.Num_memtables-1 {
+					fmt.Println("Memtable reached max size, moving to next instance...")
+					mtIndex++
+					err = memtableInstances[mtIndex].Add(parts[1], parts[2])
+				} else if err != nil && mtIndex == cfg.Num_memtables-1 {
+					fmt.Println("Serializing to SSTable...")
+					// ovde dodati logiku kojom se kreira SSTable
 				} else {
 					fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
 				}
@@ -139,11 +164,12 @@ func main() {
 			}
 
 			// Pretrazi Memtable po zadatom kljucu
-			value, found := memtableInstance.Get(parts[1])
-			if found {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
-			} else {
-				fmt.Printf("Nema podataka za kljuc: %s\n", parts[1])
+			for i := 0; i < cfg.Num_memtables; i++ {
+				value, found := memtableInstances[i].Get(parts[1])
+				if found {
+					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
+					break
+				}
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -159,7 +185,18 @@ func main() {
 
 			// Konverzija kljuca u []byte, tombstone je true
 			key := []byte(parts[1])
-			value, found := memtableInstance.Get(parts[1])
+
+			var value string
+			var found bool
+			delIndex := 0
+			for delIndex < cfg.Num_memtables {
+				value, found = memtableInstances[delIndex].Get(parts[1])
+				if found {
+					break
+				} else {
+					delIndex++
+				}
+			}
 			tombstone := true
 
 			// Izbrisi iz WAL-a i Memtable-a
@@ -168,7 +205,7 @@ func main() {
 				if err != nil {
 					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
 				} else {
-					err := memtableInstance.Delete(parts[1])
+					err := memtableInstances[delIndex].Delete(parts[1])
 					if err != nil {
 						fmt.Printf("Greska prilikom brisanja iz Memtable-a: %v\n", err)
 					} else {
