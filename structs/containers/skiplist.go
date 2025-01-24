@@ -34,8 +34,8 @@ func (s *SkipList) roll() int {
 	// possible ret Values from rand are 0 and 1
 	// we stop shen we get a 0
 	for ; rand.Int31n(2) == 1; level++ {
-		if level >= s.maxHeight {
-			return level - 1
+		if level >= s.maxHeight-1 {
+			break
 		}
 	}
 	return level
@@ -90,13 +90,17 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 
 }
 
-func (sl *SkipList) WriteElement(str string, value []byte) error {
+func (sl *SkipList) WriteElement(str string, value []byte) bool {
 	current := &sl.levels[sl.maxHeight-1]
 	stack := make([]*Node, 0)
 	var newNode Node
 	for {
 		if current.Key == str {
-			return errors.New("duplicate element")
+			for current != nil {
+				current.Value = value
+				current = current.Down
+			}
+			return false
 		}
 		if current.Next == nil {
 			if current.Down == nil {
@@ -137,7 +141,7 @@ func (sl *SkipList) WriteElement(str string, value []byte) error {
 			bttm = &upperNodes[i-1]
 		}
 	}
-	return nil
+	return true
 }
 
 func (sl *SkipList) DeleteElement(str string) error {
@@ -181,13 +185,15 @@ func NewSkipListMemtable(maxHeight, maxSize int, blockManager *blockmanager.Bloc
 	}
 }
 
-func (m *SkipListMemtable) Add(key, value string) error {
+func (m *SkipListMemtable) Add(key string, value []byte) error {
 	if m.size >= m.maxSize {
 		return memtable.MemtableFull
 	}
-	err := m.data.WriteElement(key, []byte(value))
-	m.size++
-	return err
+	newelem := m.data.WriteElement(key, value)
+	if newelem {
+		m.size++
+	}
+	return nil
 }
 
 func (m *SkipListMemtable) Delete(key string) error {
@@ -198,12 +204,12 @@ func (m *SkipListMemtable) Delete(key string) error {
 	return nil
 }
 
-func (m *SkipListMemtable) Get(key string) (string, bool) {
+func (m *SkipListMemtable) Get(key string) ([]byte, bool) {
 	value, exists := m.data.ReadElement(key)
 	if exists == nil {
-		return string(value), true
+		return value, true
 	}
-	return "", false
+	return []byte{}, false
 }
 
 func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {

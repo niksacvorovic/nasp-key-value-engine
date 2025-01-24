@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+	"time"
 
 	"projekat/config"
 	"projekat/structs/blockmanager"
@@ -117,6 +119,37 @@ func main() {
 		// Parsiranje komande
 		command := strings.ToUpper(parts[0])
 
+		// Kontrola pristupa
+		tokenIndex := mtIndex
+		if command == "GET" || command == "PUT" || command == "DELETE" {
+			bucket, ok := memtableInstances[tokenIndex].Get("_TOKEN_BUCKET")
+			if !ok {
+				newtimestamp := uint64(time.Now().Unix())
+				newtokens := uint8(cfg.TokenRate)
+				newbucket := make([]byte, 0)
+				newbucket = binary.BigEndian.AppendUint64(newbucket, newtimestamp)
+				newbucket = append(newbucket, newtokens)
+				memtableInstances[0].Add("_TOKEN_BUCKET", newbucket)
+				bucket = newbucket
+			}
+			timestamp := binary.BigEndian.Uint64(bucket[0:8])
+			tokens := uint8(bucket[8])
+			if tokens == 0 && time.Now().Unix()-int64(timestamp) < int64(cfg.TokenInterval) {
+				fmt.Println("Prekoračen broj tokena! Molim Vas sačekajte...")
+				continue
+			} else {
+				if time.Now().Unix()-int64(timestamp) >= int64(cfg.TokenInterval) {
+					timestamp = uint64(time.Now().Unix())
+					tokens = uint8(cfg.TokenRate)
+				}
+				tokens--
+				bucket = make([]byte, 0)
+				bucket = binary.BigEndian.AppendUint64(bucket, timestamp)
+				bucket = append(bucket, tokens)
+			}
+			memtableInstances[tokenIndex].Add("_TOKEN_BUCKET", bucket)
+		}
+
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PUT komanda
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -139,11 +172,11 @@ func main() {
 			if err != nil {
 				fmt.Printf("Greska prilikom pisanja u WAL: %v\n", err)
 			} else {
-				err = memtableInstances[mtIndex].Add(parts[1], parts[2])
+				err = memtableInstances[mtIndex].Add(parts[1], value)
 				if err != nil && mtIndex != cfg.Num_memtables-1 {
 					fmt.Println("Memtable reached max size, moving to next instance...")
 					mtIndex++
-					err = memtableInstances[mtIndex].Add(parts[1], parts[2])
+					memtableInstances[mtIndex].Add(parts[1], value)
 					fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
 				} else if err != nil && mtIndex == cfg.Num_memtables-1 {
 					fmt.Println("Serializing to SSTable...")
@@ -187,7 +220,7 @@ func main() {
 			// Konverzija kljuca u []byte, tombstone je true
 			key := []byte(parts[1])
 
-			var value string
+			var value []byte
 			var found bool
 			delIndex := 0
 			for delIndex < cfg.Num_memtables {
@@ -202,7 +235,7 @@ func main() {
 
 			// Izbrisi iz WAL-a i Memtable-a
 			if found {
-				err = wal.AppendRecord(tombstone, key, []byte(value))
+				err = wal.AppendRecord(tombstone, key, value)
 				if err != nil {
 					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
 				} else {

@@ -1,10 +1,12 @@
 {
-    "MaxMemtableSize": 5,
+    "MaxMemtableSize": 10,
     "Num_memtables": 5,
-    "Memtable_struct": "skipList", 
+    "Memtable_struct": "hashMap", 
     "SkipListLevelNum": 5,
     "WALmaxSegmentSize": 5,
     "BlockSize": 4096,
     "BlockCacheSize": 20,
-    "FilePath": "file.data"
+    "FilePath": "file.data",
+    "TokenRate": 5,
+    "TokenInterval": 60
 }

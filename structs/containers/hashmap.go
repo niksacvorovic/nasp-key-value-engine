@@ -27,8 +27,8 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 }
 
 // Add dodaje par kljuc-vrednost u HashMapMemtable
-func (m *HashMapMemtable) Add(key, value string) error {
-	m.data[key] = []byte(value)
+func (m *HashMapMemtable) Add(key string, value []byte) error {
+	m.data[key] = value
 
 	if len(m.data) >= m.maxSize {
 		return memtable.MemtableFull
@@ -47,9 +47,9 @@ func (m *HashMapMemtable) Delete(key string) error {
 }
 
 // Get dohvata vrednost prema kljucu iz HashMapMemtable-a
-func (m *HashMapMemtable) Get(key string) (string, bool) {
+func (m *HashMapMemtable) Get(key string) ([]byte, bool) {
 	value, exists := m.data[key]
-	return string(value), exists
+	return value, exists
 }
 
 // PrintData ispisuje sve podatke u HashMapMemtable-u

@@ -13,9 +13,9 @@ import (
 
 // MemtableInterface definise zajednicki interfejs za sve implementacije Memtable-a
 type MemtableInterface interface {
-	Add(key, value string) error
+	Add(key string, value []byte) error
 	Delete(key string) error
-	Get(key string) (string, bool)
+	Get(key string) ([]byte, bool)
 	// PrintData()
 	LoadFromWAL(file *os.File, offset int64) (int64, error)
 	Serialize() error
@@ -54,7 +54,7 @@ func LoadFromWALHelper(file *os.File, memtable MemtableInterface, offset int64) 
 		if record.Tombstone {
 			memtable.Delete(string(record.Key))
 		} else {
-			err = memtable.Add(string(record.Key), string(record.Value))
+			err = memtable.Add(string(record.Key), record.Value)
 			if err == MemtableFull {
 				offset, _ = file.Seek(0, 1)
 				return offset, err

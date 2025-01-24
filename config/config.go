@@ -10,4 +10,6 @@ type Config struct {
 	BlockSize         int    `json:"BlockSize"`
 	BlockCacheSize    int    `json:"BlockCacheSize"`
 	FilePath          string `json:"FilePath"`
+	TokenRate         int    `json:"TokenRate"`
+	TokenInterval     int    `json:"TokenInterval"`
 }
