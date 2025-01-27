@@ -3,6 +3,7 @@ package containers
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
@@ -13,7 +14,6 @@ type HashMapMemtable struct {
 	data         map[string][]byte
 	maxSize      int
 	blockManager *blockmanager.BlockManager
-	block_idx    int
 }
 
 // NewHashMapMemtable kreira novu instancu HashMapMemtable-a
@@ -22,7 +22,6 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 		data:         make(map[string][]byte),
 		maxSize:      maxSize,
 		blockManager: blockManager,
-		block_idx:    0,
 	}
 }
 
@@ -30,11 +29,14 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 func (m *HashMapMemtable) Add(key string, value []byte) error {
 	m.data[key] = value
 
-	if len(m.data) >= m.maxSize {
-		return memtable.MemtableFull
-	}
-
 	return nil
+}
+
+func (m *HashMapMemtable) IsFull() (bool) {
+	if len(m.data) >= m.maxSize + 1 {
+		return true
+	}
+	return false
 }
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
@@ -65,22 +67,44 @@ func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error
 	return memtable.LoadFromWALHelper(file, m, offset)
 }
 
-func (m *HashMapMemtable) Serialize() error {
-	blockData := make([]byte, 0, m.maxSize*10)
-	for k, v := range m.data {
-		keyLen := len(k)
-		valueLen := len(v)
-		blockData = append(blockData, byte(keyLen))
-		blockData = append(blockData, []byte(k)...)
-		blockData = append(blockData, byte(valueLen))
-		blockData = append(blockData, v...)
+func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) error {
+	// Sortiramo ključeve
+	keys := make([]string, 0, len(m.data))
+	for key := range m.data {
+		keys = append(keys, key)
 	}
-	blockData = append(blockData, make([]byte, 4096-len(blockData))...)
-	err := m.blockManager.WriteBlock("file.data", m.block_idx, blockData)
-	if err != nil {
-		return fmt.Errorf("error writing to BlockManager: %v", err)
-	}
-	m.block_idx += 1
+	sort.Strings(keys)
 
+	// Serijalizacija podataka u SSTable format
+	blockData := make([]byte, 0, m.maxSize*10)
+	for _, key := range keys {
+		value := m.data[key]
+
+		// Dužina ključa i vrednosti
+		keyLen := len(key)
+		valueLen := len(value)
+
+		// Serijalizacija u binarni format: [keyLen][key][valueLen][value]
+		blockData = append(blockData, byte(keyLen))
+		blockData = append(blockData, []byte(key)...)
+		blockData = append(blockData, byte(valueLen))
+		blockData = append(blockData, value...)
+	}
+
+	padding := BlockSize - (len(blockData) % BlockSize)
+	if padding < BlockSize {
+		blockData = append(blockData, make([]byte, padding)...)
+	}
+
+	// Pisanje podataka u SSTable fajl koristeći BlockManager
+	err := m.blockManager.WriteBlock(filename, blockData)
+	if err != nil {
+		return fmt.Errorf("greška pri pisanju u BlockManager: %v", err)
+	}
+
+	// Resetujemo Memtable
+	m.data = make(map[string][]byte)
+
+	fmt.Printf("Podaci uspešno serijalizovani u SSTable fajl: %s\n", filename)
 	return nil
 }

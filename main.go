@@ -172,17 +172,17 @@ func main() {
 			if err != nil {
 				fmt.Printf("Greska prilikom pisanja u WAL: %v\n", err)
 			} else {
-				err = memtableInstances[mtIndex].Add(parts[1], value)
-				if err != nil && mtIndex != cfg.Num_memtables-1 {
-					fmt.Println("Memtable reached max size, moving to next instance...")
+				memtableInstances[mtIndex].Add(parts[1], value)
+				fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
+				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+					fmt.Println("Dostignuta maksimalna velicina Memtable-a, prelazak na sledeci...")
 					mtIndex++
-					memtableInstances[mtIndex].Add(parts[1], value)
-					fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
-				} else if err != nil && mtIndex == cfg.Num_memtables-1 {
-					fmt.Println("Serializing to SSTable...")
-					// ovde dodati logiku kojom se kreira SSTable
-				} else {
-					fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
+					continue
+				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
+					for i := 0; i < cfg.Num_memtables; i++ {
+						memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
+					}					
 				}
 			}
 

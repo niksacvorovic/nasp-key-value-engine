@@ -9,11 +9,15 @@ import (
 type BlockManager struct {
 	blockCache *BlockCache
 	blockSize  int
+	block_idx int
 }
 
 // Funckija koja vraća novi Block Manager
 func NewBlockManager(blockSize int, capacity int) *BlockManager {
-	return &BlockManager{blockCache: NewBlockCache(capacity), blockSize: blockSize}
+	return &BlockManager{
+		blockCache: NewBlockCache(capacity), blockSize: blockSize,
+		block_idx:  0,
+	}
 }
 
 // Funckija za citanje blokova
@@ -44,7 +48,7 @@ func (bm *BlockManager) ReadBlock(filePath string, blockIndex int) []byte {
 }
 
 // Funkcija za pisanje blokova
-func (bm *BlockManager) WriteBlock(filePath string, blockIndex int, data []byte) error {
+func (bm *BlockManager) WriteBlock(filePath string, data []byte) error {
 
 	if len(data) != bm.blockSize {
 		return errors.New("data size does not match block size")
@@ -56,12 +60,15 @@ func (bm *BlockManager) WriteBlock(filePath string, blockIndex int, data []byte)
 	}
 	defer file.Close()
 
-	_, err = file.WriteAt(data, int64(blockIndex*bm.blockSize))
+	_, err = file.WriteAt(data, int64(bm.block_idx*bm.blockSize))
 	if err != nil {
 		panic(err)
 	}
 
-	sign := Signature{filePath, blockIndex}
+	// Azuriraj block_idx
+	bm.block_idx ++
+
+	sign := Signature{filePath, bm.block_idx}
 	if _, ok := bm.blockCache.hash[sign]; ok {
 		bm.blockCache.hash[sign].data = data
 	}

@@ -216,7 +216,8 @@ func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, erro
 	return memtable.LoadFromWALHelper(file, m, offset)
 }
 
-func (m *SkipListMemtable) Serialize() error {
+// Samo HashMap serijalizacija u SSTable je odradjena - ova funkcija se treba izmjeniti
+func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) error {
 	blockData := make([]byte, 0, m.maxSize*10)
 	current := &m.data.levels[m.data.maxHeight-1]
 	for current.Next != nil {
@@ -229,9 +230,14 @@ func (m *SkipListMemtable) Serialize() error {
 		blockData = append(blockData, current.Value...)
 	}
 	blockData = append(blockData, make([]byte, 4096-len(blockData))...)
-	err := m.blockManager.WriteBlock("file.data", 0, blockData)
+	err := m.blockManager.WriteBlock("file.data", blockData)
 	if err != nil {
 		return fmt.Errorf("error writing to BlockManager: %v", err)
 	}
 	return nil
+}
+
+// Isto TEMP
+func (m *SkipListMemtable) IsFull() (bool) {
+	return true
 }

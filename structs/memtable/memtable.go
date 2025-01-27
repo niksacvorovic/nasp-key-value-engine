@@ -18,7 +18,8 @@ type MemtableInterface interface {
 	Get(key string) ([]byte, bool)
 	// PrintData()
 	LoadFromWAL(file *os.File, offset int64) (int64, error)
-	Serialize() error
+	SerializeToSSTable(filename string, BlockSize int) error
+	IsFull() (bool)
 }
 
 // Greška ukoliko je Memtable popunjen
