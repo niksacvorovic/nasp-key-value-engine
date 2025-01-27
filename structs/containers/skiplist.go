@@ -237,7 +237,7 @@ func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) er
 	return nil
 }
 
-// Isto TEMP
+// Isto kao prethodna - treba se izmjeniti
 func (m *SkipListMemtable) IsFull() (bool) {
 	return true
 }

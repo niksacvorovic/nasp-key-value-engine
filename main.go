@@ -156,35 +156,43 @@ func main() {
 
 		switch command {
 		// PUT komanda ocekuje 2 argumenta: key, value
-		case "PUT":
-			if len(parts) != 3 {
-				fmt.Println("Greska: PUT zahteva <key> <value>")
+	case "PUT":
+		// Proverava da li PUT komanda ima tačno 2 argumenta: key i value
+		if len(parts) != 3 {
+			fmt.Println("Greška: PUT zahteva <key> <value>")
+			continue
+		}
+
+		// Konverzija ključa i vrednosti u []byte tip, tombstone je postavljen na false
+		key := []byte(parts[1])
+		value := []byte(parts[2])
+		tombstone := false
+
+		// Dodavanje zapisa u Write-Ahead Log (WAL)
+		err = wal.AppendRecord(tombstone, key, value)
+		if err != nil {
+			// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
+			fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
+		} else {
+			// Ako je upis u WAL uspesan, dodaje se u Memtable
+			memtableInstances[mtIndex].Add(parts[1], value)
+			fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
+
+			// Provera da li je trenutni Memtable pun
+			if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+				// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
+				fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
+				mtIndex++
 				continue
-			}
-
-			// Konverzija kljuca i vrednosti u []byte, tombstone je false
-			key := []byte(parts[1])
-			value := []byte(parts[2])
-			tombstone := false
-
-			// Dodaj u WAL i Memtable
-			err = wal.AppendRecord(tombstone, key, value)
-			if err != nil {
-				fmt.Printf("Greska prilikom pisanja u WAL: %v\n", err)
-			} else {
-				memtableInstances[mtIndex].Add(parts[1], value)
-				fmt.Printf("Uspesno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
-				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
-					fmt.Println("Dostignuta maksimalna velicina Memtable-a, prelazak na sledeci...")
-					mtIndex++
-					continue
-				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
-					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
-					for i := 0; i < cfg.Num_memtables; i++ {
-						memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
-					}					
+			} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+				// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
+				fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
+				for i := 0; i < cfg.Num_memtables; i++ {
+					// Serijalizacija svakog Memtable-a u SSTable fajl
+					memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
 				}
 			}
+		}
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// GET komanda

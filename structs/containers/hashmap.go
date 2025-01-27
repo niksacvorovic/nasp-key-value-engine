@@ -28,10 +28,10 @@ func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *H
 // Add dodaje par kljuc-vrednost u HashMapMemtable
 func (m *HashMapMemtable) Add(key string, value []byte) error {
 	m.data[key] = value
-
 	return nil
 }
 
+// Vraca true ako je memtable pun, a u suprotnom false
 func (m *HashMapMemtable) IsFull() (bool) {
 	if len(m.data) >= m.maxSize + 1 {
 		return true
@@ -67,6 +67,7 @@ func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error
 	return memtable.LoadFromWALHelper(file, m, offset)
 }
 
+// SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
 func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) error {
 	// Sortiramo ključeve
 	keys := make([]string, 0, len(m.data))
@@ -91,6 +92,7 @@ func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) err
 		blockData = append(blockData, value...)
 	}
 
+	// Dodavanje paddinga
 	padding := BlockSize - (len(blockData) % BlockSize)
 	if padding < BlockSize {
 		blockData = append(blockData, make([]byte, padding)...)
