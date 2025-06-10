@@ -17,16 +17,15 @@ type MerkleTree struct {
 	MerkleRoot MerkleNode
 }
 
-func GenerateMerkleLeaves(bytes []byte) []MerkleNode {
+func NewMerkleTree() MerkleTree {
+	return MerkleTree{}
+}
+
+func (mt *MerkleTree) ConstructMerkleTree(bytes []byte) {
+	// Generisanje listova stabla
 	leaves := make([]MerkleNode, 0)
-	for i := 0; i < len(bytes); i += 4 {
-		chunk := make([]byte, 0)
-		for j := 0; j < 4; j++ {
-			if i+j == len(bytes) {
-				break
-			}
-			chunk = append(chunk, bytes[i+j])
-		}
+	for i := 0; i < len(bytes); i += 256 {
+		chunk := bytes[i : i+256]
 		hash := md5.Sum(chunk)
 		leaf := MerkleNode{hash[:], nil, nil}
 		leaves = append(leaves, leaf)
@@ -34,10 +33,7 @@ func GenerateMerkleLeaves(bytes []byte) []MerkleNode {
 	if len(leaves)%2 != 0 {
 		leaves = append(leaves, MerkleNode{make([]byte, 0), nil, nil})
 	}
-	return leaves
-}
-
-func ConstructMerkleTree(leaves []MerkleNode) MerkleTree {
+	// Izgradnja viših nivoa stabla
 	nextlevel := make([]MerkleNode, 0)
 	for i := 0; i < len(leaves); i += 2 {
 		newhash := md5.Sum(append(leaves[i].Hash, leaves[i+1].Hash...))
@@ -60,8 +56,7 @@ func ConstructMerkleTree(leaves []MerkleNode) MerkleTree {
 		}
 		prevlevel = nextlevel
 	}
-	tree := MerkleTree{prevlevel[0]}
-	return tree
+	mt.MerkleRoot = prevlevel[0]
 }
 
 func (mt MerkleTree) Serialize() []byte {
@@ -101,7 +96,10 @@ func (mt *MerkleTree) Deserialize(file *os.File) error {
 		// PRAVLJENJE DUBOKE KOPIJE
 		hash := append([]byte{}, hash...)
 		_, err := file.Read(lvlnum)
-		if err != nil {
+		if err == io.EOF {
+			matrix = append(matrix, level)
+			break
+		} else if err != nil {
 			panic(err)
 		}
 		if lvlnum[0] > current {
@@ -110,10 +108,7 @@ func (mt *MerkleTree) Deserialize(file *os.File) error {
 			current++
 		}
 		_, err = file.Read(hash)
-		if err == io.EOF {
-			matrix = append(matrix, level)
-			break
-		} else if err != nil {
+		if err != nil {
 			panic(err)
 		}
 		level = append(level, MerkleNode{hash, nil, nil})

@@ -6,6 +6,7 @@
     "WALmaxSegmentSize": 5,
     "BlockSize": 4096,
     "BlockCacheSize": 20,
+    "LRUCacheSize":20,
     "FilePath": "file.data",
     "TokenRate": 5,
     "TokenInterval": 60

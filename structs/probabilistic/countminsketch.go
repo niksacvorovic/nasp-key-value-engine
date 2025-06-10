@@ -1,16 +1,11 @@
-package structs
+package probabilistic
 
 import (
-	"crypto/md5"
 	"encoding/binary"
 	"math"
 	"os"
 	"time"
 )
-
-type HashWithSeed struct {
-	Seed []byte
-}
 
 type CountMinSketch struct {
 	HashFunctions []HashWithSeed
@@ -25,18 +20,12 @@ func CalculateK(delta float64) uint {
 	return uint(math.Ceil(math.Log(math.E / delta)))
 }
 
-func (h HashWithSeed) Hash(data []byte) uint64 {
-	fn := md5.New()
-	fn.Write(append(data, h.Seed...))
-	return binary.BigEndian.Uint64(fn.Sum(nil))
-}
-
-func CreateHashFunctions(k uint) []HashWithSeed {
+func CMS_CreateHashFunctions(k uint32) []HashWithSeed {
 	h := make([]HashWithSeed, k)
-	ts := uint(time.Now().Unix())
-	for i := uint(0); i < k; i++ {
+	ts := uint32(time.Now().Unix())
+	for i := uint32(0); i < k; i++ {
 		seed := make([]byte, 32)
-		binary.BigEndian.PutUint32(seed, uint32(ts+i))
+		binary.BigEndian.PutUint32(seed, ts+i)
 		hfn := HashWithSeed{Seed: seed}
 		h[i] = hfn
 	}
@@ -51,7 +40,7 @@ func CreateCountMinSketch(epsilon float64, delta float64) CountMinSketch {
 		matrix[i] = make([]uint32, m)
 	}
 	return CountMinSketch{
-		HashFunctions: CreateHashFunctions(k),
+		HashFunctions: CMS_CreateHashFunctions(uint32(k)),
 		Matrix:        matrix,
 	}
 }

@@ -8,6 +8,8 @@ import (
 
 	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
+	"projekat/structs/merkletree"
+	"projekat/structs/probabilistic"
 )
 
 type Node struct {
@@ -218,10 +220,14 @@ func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, erro
 
 // Samo HashMap serijalizacija u SSTable je odradjena - ova funkcija se treba izmjeniti
 func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) error {
+	// Inicijalizacija Bloom filtera nad SSTable
+	bf := probabilistic.CreateBF(m.maxSize, 99.9)
+
 	blockData := make([]byte, 0, m.maxSize*10)
 	current := &m.data.levels[m.data.maxHeight-1]
 	for current.Next != nil {
 		current = current.Next
+		bf.AddElement(current.Key)
 		keyLen := len(current.Key)
 		valueLen := len(current.Value)
 		blockData = append(blockData, byte(keyLen))
@@ -230,6 +236,9 @@ func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) er
 		blockData = append(blockData, current.Value...)
 	}
 	blockData = append(blockData, make([]byte, 4096-len(blockData))...)
+	// Izgradnja Merkle stabla nad SSTable
+	mt := merkletree.NewMerkleTree()
+	mt.ConstructMerkleTree(blockData)
 	err := m.blockManager.WriteBlock("file.data", blockData)
 	if err != nil {
 		return fmt.Errorf("error writing to BlockManager: %v", err)
@@ -238,6 +247,6 @@ func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) er
 }
 
 // Isto kao prethodna - treba se izmjeniti
-func (m *SkipListMemtable) IsFull() (bool) {
+func (m *SkipListMemtable) IsFull() bool {
 	return true
 }

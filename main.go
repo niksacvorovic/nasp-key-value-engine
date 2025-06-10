@@ -13,6 +13,7 @@ import (
 	"projekat/config"
 	"projekat/structs/blockmanager"
 	"projekat/structs/containers"
+	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
 	"projekat/structs/wal"
 )
@@ -44,6 +45,9 @@ func main() {
 		return
 	}
 	defer wal.Close()
+
+	// Inicijalizacija LRU keša
+	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
 
 	// Inicijalizacija BlockManager-a
 	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
@@ -156,43 +160,49 @@ func main() {
 
 		switch command {
 		// PUT komanda ocekuje 2 argumenta: key, value
-	case "PUT":
-		// Proverava da li PUT komanda ima tačno 2 argumenta: key i value
-		if len(parts) != 3 {
-			fmt.Println("Greška: PUT zahteva <key> <value>")
-			continue
-		}
-
-		// Konverzija ključa i vrednosti u []byte tip, tombstone je postavljen na false
-		key := []byte(parts[1])
-		value := []byte(parts[2])
-		tombstone := false
-
-		// Dodavanje zapisa u Write-Ahead Log (WAL)
-		err = wal.AppendRecord(tombstone, key, value)
-		if err != nil {
-			// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
-			fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
-		} else {
-			// Ako je upis u WAL uspesan, dodaje se u Memtable
-			memtableInstances[mtIndex].Add(parts[1], value)
-			fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
-
-			// Provera da li je trenutni Memtable pun
-			if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
-				// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
-				fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
-				mtIndex++
+		case "PUT":
+			// Proverava da li PUT komanda ima tačno 2 argumenta: key i value
+			if len(parts) != 3 {
+				fmt.Println("Greška: PUT zahteva <key> <value>")
 				continue
-			} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
-				// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
-				fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
-				for i := 0; i < cfg.Num_memtables; i++ {
-					// Serijalizacija svakog Memtable-a u SSTable fajl
-					memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
+			}
+
+			// Konverzija ključa i vrednosti u []byte tip, tombstone je postavljen na false
+			key := []byte(parts[1])
+			value := []byte(parts[2])
+			tombstone := false
+
+			// Izmena LRU keša (ukoliko je potrebno)
+			_, exists := lru.CheckCache(parts[1])
+			if exists {
+				lru.UpdateCache(parts[1], value)
+			}
+
+			// Dodavanje zapisa u Write-Ahead Log (WAL)
+			err = wal.AppendRecord(tombstone, key, value)
+			if err != nil {
+				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
+				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
+			} else {
+				// Ako je upis u WAL uspesan, dodaje se u Memtable
+				memtableInstances[mtIndex].Add(parts[1], value)
+				fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
+
+				// Provera da li je trenutni Memtable pun
+				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
+					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
+					mtIndex++
+					continue
+				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
+					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
+					for i := 0; i < cfg.Num_memtables; i++ {
+						// Serijalizacija svakog Memtable-a u SSTable fajl
+						memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
+					}
 				}
 			}
-		}
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// GET komanda
@@ -204,12 +214,20 @@ func main() {
 				fmt.Println("Greska: GET zahteva <key>")
 				continue
 			}
+			// Pretraga keša po zadatom ključu
+			value, found := lru.CheckCache(parts[1])
+			if found {
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
+				break
+			}
 
 			// Pretrazi Memtable po zadatom kljucu
 			for i := 0; i < cfg.Num_memtables; i++ {
-				value, found := memtableInstances[i].Get(parts[1])
+				value, found = memtableInstances[i].Get(parts[1])
 				if found {
 					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
+					// Zapis u keš
+					lru.UpdateCache(parts[1], value)
 					break
 				}
 			}
@@ -224,6 +242,8 @@ func main() {
 				fmt.Println("Greska: DELETE zahteva <key>")
 				continue
 			}
+			// Brisanje iz keša
+			lru.DeleteFromCache(parts[1])
 
 			// Konverzija kljuca u []byte, tombstone je true
 			key := []byte(parts[1])

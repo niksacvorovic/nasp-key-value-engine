@@ -1,4 +1,4 @@
-package structs
+package probabilistic
 
 import (
 	"crypto/md5"
@@ -17,11 +17,11 @@ type BloomFilter struct {
 	hashes []HashWithSeed
 }
 
-func CalculateM(expectedElements int, falsePositiveRate float64) uint {
+func BF_CalculateM(expectedElements int, falsePositiveRate float64) uint {
 	return uint(math.Ceil(float64(expectedElements) * math.Abs(math.Log(falsePositiveRate)) / math.Pow(math.Log(2), float64(2))))
 }
 
-func CalculateK(expectedElements int, m uint) uint {
+func BF_CalculateK(expectedElements int, m uint) uint {
 	return uint(math.Ceil((float64(m) / float64(expectedElements)) * math.Log(2)))
 }
 
@@ -31,7 +31,7 @@ func (h HashWithSeed) Hash(data []byte) uint64 {
 	return binary.BigEndian.Uint64(fn.Sum(nil))
 }
 
-func CreateHashFunctions(k uint32) []HashWithSeed {
+func BF_CreateHashFunctions(k uint32) []HashWithSeed {
 	h := make([]HashWithSeed, k)
 	ts := uint32(time.Now().Unix())
 	for i := uint32(0); i < k; i++ {
@@ -44,10 +44,10 @@ func CreateHashFunctions(k uint32) []HashWithSeed {
 }
 
 func CreateBF(length int, rate float64) BloomFilter {
-	m := CalculateM(length, rate)
+	m := BF_CalculateM(length, rate)
 	return BloomFilter{
 		array:  make([]bool, m),
-		hashes: CreateHashFunctions(uint32(CalculateK(length, m))),
+		hashes: BF_CreateHashFunctions(uint32(BF_CalculateK(length, m))),
 	}
 }
 

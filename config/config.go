@@ -9,6 +9,7 @@ type Config struct {
 	WALmaxSegmentSize int    `json:"WALmaxSegmentSize"`
 	BlockSize         int    `json:"BlockSize"`
 	BlockCacheSize    int    `json:"BlockCacheSize"`
+	LRUCacheSize      int    `json:"LRUCacheSize"`
 	FilePath          string `json:"FilePath"`
 	TokenRate         int    `json:"TokenRate"`
 	TokenInterval     int    `json:"TokenInterval"`

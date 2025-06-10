@@ -7,6 +7,8 @@ import (
 
 	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
+	"projekat/structs/merkletree"
+	"projekat/structs/probabilistic"
 )
 
 // HashMapMemtable implementira MemtableInterface koristeci mapu
@@ -32,11 +34,8 @@ func (m *HashMapMemtable) Add(key string, value []byte) error {
 }
 
 // Vraca true ako je memtable pun, a u suprotnom false
-func (m *HashMapMemtable) IsFull() (bool) {
-	if len(m.data) >= m.maxSize + 1 {
-		return true
-	}
-	return false
+func (m *HashMapMemtable) IsFull() bool {
+	return len(m.data) >= m.maxSize+1
 }
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
@@ -69,10 +68,14 @@ func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error
 
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
 func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) error {
-	// Sortiramo ključeve
+	// Inicijalizacija Bloom filtera nad SSTable
+	bf := probabilistic.CreateBF(m.maxSize, 99.9)
+
+	// Sortiramo ključeve i gradimo Bloom fiter
 	keys := make([]string, 0, len(m.data))
 	for key := range m.data {
 		keys = append(keys, key)
+		bf.AddElement(key)
 	}
 	sort.Strings(keys)
 
@@ -97,6 +100,13 @@ func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) err
 	if padding < BlockSize {
 		blockData = append(blockData, make([]byte, padding)...)
 	}
+
+	// Izgradnja Merkle stabla nad SSTable
+	mt := merkletree.NewMerkleTree()
+	mt.ConstructMerkleTree(blockData)
+
+	// Ovde treba dodati zapisivanje Bloom filtera i Merkle stabla u fajl
+	// Možda lakše da prvo to bude upisano u odvojene fajlove
 
 	// Pisanje podataka u SSTable fajl koristeći BlockManager
 	err := m.blockManager.WriteBlock(filename, blockData)
