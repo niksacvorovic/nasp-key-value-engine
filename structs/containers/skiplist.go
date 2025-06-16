@@ -2,21 +2,16 @@ package containers
 
 import (
 	"errors"
-	"fmt"
 	"math/rand"
 	"os"
 
-	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
-	"projekat/structs/merkletree"
-	"projekat/structs/probabilistic"
 )
 
 type Node struct {
-	Key   string
-	Value []byte
-	Next  *Node
-	Down  *Node
+	Record memtable.Record
+	Next   *Node
+	Down   *Node
 }
 
 type SkipList struct {
@@ -25,10 +20,9 @@ type SkipList struct {
 }
 
 type SkipListMemtable struct {
-	data         *SkipList
-	size         int
-	maxSize      int
-	blockManager *blockmanager.BlockManager
+	data    *SkipList
+	size    int
+	maxSize int
 }
 
 func (s *SkipList) roll() int {
@@ -53,9 +47,9 @@ func CreateSL(maxHeight int) *SkipList {
 			downptr = &nodes[i-1]
 		}
 		nodes[i] = Node{
-			Key:  "",
-			Next: nil,
-			Down: downptr,
+			Record: memtable.Record{Key: "", Value: []byte{}},
+			Next:   nil,
+			Down:   downptr,
 		}
 	}
 	return &SkipList{
@@ -67,7 +61,7 @@ func CreateSL(maxHeight int) *SkipList {
 func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 	current := &sl.levels[sl.maxHeight-1]
 	for {
-		if current.Key == str {
+		if current.Record.Key == str {
 			break
 		}
 		if current.Next == nil {
@@ -75,7 +69,7 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 				break
 			}
 			current = current.Down
-		} else if current.Next.Key > str {
+		} else if current.Next.Record.Key > str {
 			if current.Down == nil {
 				break
 			}
@@ -84,10 +78,10 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 			current = current.Next
 		}
 	}
-	if current.Key == str {
-		return current.Value, nil
+	if current.Record.Key == str {
+		return current.Record.Value, nil
 	} else {
-		return current.Value, errors.New("nonexistent value")
+		return current.Record.Value, errors.New("nonexistent value")
 	}
 
 }
@@ -97,9 +91,9 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 	stack := make([]*Node, 0)
 	var newNode Node
 	for {
-		if current.Key == str {
+		if current.Record.Key == str {
 			for current != nil {
-				current.Value = value
+				current.Record.Value = value
 				current = current.Down
 			}
 			return false
@@ -110,7 +104,7 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 			}
 			stack = append(stack, current)
 			current = current.Down
-		} else if current.Next.Key > str {
+		} else if current.Next.Record.Key > str {
 			if current.Down == nil {
 				break
 			}
@@ -121,10 +115,9 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 		}
 	}
 	newNode = Node{
-		Key:   str,
-		Value: value,
-		Next:  current.Next,
-		Down:  nil,
+		Record: memtable.Record{Key: str, Value: value},
+		Next:   current.Next,
+		Down:   nil,
 	}
 	current.Next = &newNode
 	stackLen := len(stack)
@@ -134,10 +127,9 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 		bttm := &newNode
 		for i := 1; i <= len(upperNodes); i++ {
 			upperNodes[i-1] = Node{
-				Key:   str,
-				Value: value,
-				Next:  stack[stackLen-i].Next,
-				Down:  bttm,
+				Record: memtable.Record{Key: str, Value: value},
+				Next:   stack[stackLen-i].Next,
+				Down:   bttm,
 			}
 			stack[stackLen-i].Next = &upperNodes[i-1]
 			bttm = &upperNodes[i-1]
@@ -149,7 +141,7 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 func (sl *SkipList) DeleteElement(str string) error {
 	current := &sl.levels[sl.maxHeight-1]
 	for {
-		if current.Key == str {
+		if current.Record.Key == str {
 			break
 		}
 		if current.Next == nil {
@@ -157,7 +149,7 @@ func (sl *SkipList) DeleteElement(str string) error {
 				break
 			}
 			current = current.Down
-		} else if current.Next.Key > str {
+		} else if current.Next.Record.Key > str {
 			if current.Down == nil {
 				break
 			}
@@ -166,11 +158,11 @@ func (sl *SkipList) DeleteElement(str string) error {
 			current = current.Next
 		}
 	}
-	if current.Key == str {
-		current.Value = []byte{}
+	if current.Record.Key == str {
+		current.Record.Value = []byte{}
 		for current.Down != nil {
 			current = current.Down
-			current.Value = []byte{}
+			current.Record.Value = []byte{}
 		}
 		return nil
 	} else {
@@ -178,12 +170,11 @@ func (sl *SkipList) DeleteElement(str string) error {
 	}
 }
 
-func NewSkipListMemtable(maxHeight, maxSize int, blockManager *blockmanager.BlockManager) *SkipListMemtable {
+func NewSkipListMemtable(maxHeight, maxSize int) *SkipListMemtable {
 	return &SkipListMemtable{
-		data:         CreateSL(maxHeight),
-		maxSize:      maxSize,
-		size:         0,
-		blockManager: blockManager,
+		data:    CreateSL(maxHeight),
+		maxSize: maxSize,
+		size:    0,
 	}
 }
 
@@ -218,33 +209,45 @@ func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, erro
 	return memtable.LoadFromWALHelper(file, m, offset)
 }
 
-// Samo HashMap serijalizacija u SSTable je odradjena - ova funkcija se treba izmjeniti
-func (m *SkipListMemtable) SerializeToSSTable(filename string, BlockSize int) error {
-	// Inicijalizacija Bloom filtera nad SSTable
-	bf := probabilistic.CreateBF(m.maxSize, 99.9)
-
-	blockData := make([]byte, 0, m.maxSize*10)
+func (m *SkipListMemtable) Flush() *[]memtable.Record {
+	records := make([]memtable.Record, 0, m.size)
 	current := &m.data.levels[m.data.maxHeight-1]
 	for current.Next != nil {
 		current = current.Next
-		bf.AddElement(current.Key)
-		keyLen := len(current.Key)
-		valueLen := len(current.Value)
-		blockData = append(blockData, byte(keyLen))
-		blockData = append(blockData, []byte(current.Key)...)
-		blockData = append(blockData, byte(valueLen))
-		blockData = append(blockData, current.Value...)
+		records = append(records, current.Record)
 	}
-	blockData = append(blockData, make([]byte, 4096-len(blockData))...)
-	// Izgradnja Merkle stabla nad SSTable
-	mt := merkletree.NewMerkleTree()
-	mt.ConstructMerkleTree(blockData)
-	err := m.blockManager.WriteBlock("file.data", blockData)
-	if err != nil {
-		return fmt.Errorf("error writing to BlockManager: %v", err)
-	}
-	return nil
+	// Resetovanje Memtabele na početno stanje
+	m.data = CreateSL(m.data.maxHeight)
+	m.size = 0
+	return &records
 }
+
+// NAPOMENA - OVU LOGIKU PREBACITI U SSTABLE
+
+// // Inicijalizacija Bloom filtera nad SSTable
+// bf := probabilistic.CreateBF(m.maxSize, 99.9)
+
+// blockData := make([]byte, 0, m.maxSize*10)
+//
+// for current.Next != nil {
+// 	current = current.Next
+// 	bf.AddElement(current.Key)
+// 	keyLen := len(current.Key)
+// 	valueLen := len(current.Value)
+// 	blockData = append(blockData, byte(keyLen))
+// 	blockData = append(blockData, []byte(current.Key)...)
+// 	blockData = append(blockData, byte(valueLen))
+// 	blockData = append(blockData, current.Value...)
+// }
+// blockData = append(blockData, make([]byte, 4096-len(blockData))...)
+// // Izgradnja Merkle stabla nad SSTable
+// mt := merkletree.NewMerkleTree()
+// mt.ConstructMerkleTree(blockData, m.blockManager.blockSize)
+// err := m.blockManager.WriteBlock("file.data", blockData)
+// if err != nil {
+// 	return fmt.Errorf("error writing to BlockManager: %v", err)
+// }
+// return nil
 
 // Isto kao prethodna - treba se izmjeniti
 func (m *SkipListMemtable) IsFull() bool {

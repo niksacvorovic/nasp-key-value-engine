@@ -50,6 +50,7 @@ func main() {
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
 
 	// Inicijalizacija BlockManager-a
+	// napomena - sad baca grešku jer nije nigde uključen - treba ga ubaciti u wal i sstable
 	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
 	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
@@ -58,12 +59,12 @@ func main() {
 	// Inicijalizacija niza instanci Memtable-a
 	if cfg.Memtable_struct == "hashMap" {
 		for i := 0; i < cfg.Num_memtables; i++ {
-			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize, bm)
+			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize)
 		}
 		fmt.Println("hashMap")
 	} else if cfg.Memtable_struct == "skipList" {
 		for i := 0; i < cfg.Num_memtables; i++ {
-			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize, bm)
+			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 		fmt.Println("skipList")
 
@@ -197,9 +198,11 @@ func main() {
 				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
 					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
 					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
+					tables := make([][]memtable.Record, cfg.Num_memtables)
 					for i := 0; i < cfg.Num_memtables; i++ {
-						// Serijalizacija svakog Memtable-a u SSTable fajl
-						memtableInstances[i].SerializeToSSTable("file.data", cfg.BlockSize)
+						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
+						tables = append(tables, *memtableInstances[i].Flush())
+						// ovde dodati izgradnju sstabele
 					}
 				}
 			}
@@ -214,16 +217,9 @@ func main() {
 				fmt.Println("Greska: GET zahteva <key>")
 				continue
 			}
-			// Pretraga keša po zadatom ključu
-			value, found := lru.CheckCache(parts[1])
-			if found {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
-				break
-			}
-
 			// Pretrazi Memtable po zadatom kljucu
 			for i := 0; i < cfg.Num_memtables; i++ {
-				value, found = memtableInstances[i].Get(parts[1])
+				value, found := memtableInstances[i].Get(parts[1])
 				if found {
 					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
 					// Zapis u keš
@@ -232,6 +228,12 @@ func main() {
 				}
 			}
 
+			// Pretraga keša po zadatom ključu
+			value, found := lru.CheckCache(parts[1])
+			if found {
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
+				break
+			}
 		// --------------------------------------------------------------------------------------------------------------------------
 		// DELETE komanda
 		// --------------------------------------------------------------------------------------------------------------------------

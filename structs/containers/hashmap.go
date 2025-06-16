@@ -5,25 +5,20 @@ import (
 	"os"
 	"sort"
 
-	"projekat/structs/blockmanager"
 	"projekat/structs/memtable"
-	"projekat/structs/merkletree"
-	"projekat/structs/probabilistic"
 )
 
 // HashMapMemtable implementira MemtableInterface koristeci mapu
 type HashMapMemtable struct {
-	data         map[string][]byte
-	maxSize      int
-	blockManager *blockmanager.BlockManager
+	data    map[string][]byte
+	maxSize int
 }
 
 // NewHashMapMemtable kreira novu instancu HashMapMemtable-a
-func NewHashMapMemtable(maxSize int, blockManager *blockmanager.BlockManager) *HashMapMemtable {
+func NewHashMapMemtable(maxSize int) *HashMapMemtable {
 	return &HashMapMemtable{
-		data:         make(map[string][]byte),
-		maxSize:      maxSize,
-		blockManager: blockManager,
+		data:    make(map[string][]byte),
+		maxSize: maxSize,
 	}
 }
 
@@ -67,56 +62,58 @@ func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error
 }
 
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
-func (m *HashMapMemtable) SerializeToSSTable(filename string, BlockSize int) error {
-	// Inicijalizacija Bloom filtera nad SSTable
-	bf := probabilistic.CreateBF(m.maxSize, 99.9)
-
-	// Sortiramo ključeve i gradimo Bloom fiter
-	keys := make([]string, 0, len(m.data))
+func (m *HashMapMemtable) Flush() *[]memtable.Record {
+	// Sortiramo ključeve
+	sortedKeys := make([]string, 0, len(m.data))
 	for key := range m.data {
-		keys = append(keys, key)
-		bf.AddElement(key)
+		sortedKeys = append(sortedKeys, key)
 	}
-	sort.Strings(keys)
-
-	// Serijalizacija podataka u SSTable format
-	blockData := make([]byte, 0, m.maxSize*10)
-	for _, key := range keys {
-		value := m.data[key]
-
-		// Dužina ključa i vrednosti
-		keyLen := len(key)
-		valueLen := len(value)
-
-		// Serijalizacija u binarni format: [keyLen][key][valueLen][value]
-		blockData = append(blockData, byte(keyLen))
-		blockData = append(blockData, []byte(key)...)
-		blockData = append(blockData, byte(valueLen))
-		blockData = append(blockData, value...)
+	sort.Strings(sortedKeys)
+	// Dodajemo vrednosti u niz
+	records := make([]memtable.Record, 0, len(m.data))
+	for i := range sortedKeys {
+		records = append(records, memtable.Record{Key: sortedKeys[i], Value: m.data[sortedKeys[i]]})
 	}
-
-	// Dodavanje paddinga
-	padding := BlockSize - (len(blockData) % BlockSize)
-	if padding < BlockSize {
-		blockData = append(blockData, make([]byte, padding)...)
-	}
-
-	// Izgradnja Merkle stabla nad SSTable
-	mt := merkletree.NewMerkleTree()
-	mt.ConstructMerkleTree(blockData)
-
-	// Ovde treba dodati zapisivanje Bloom filtera i Merkle stabla u fajl
-	// Možda lakše da prvo to bude upisano u odvojene fajlove
-
-	// Pisanje podataka u SSTable fajl koristeći BlockManager
-	err := m.blockManager.WriteBlock(filename, blockData)
-	if err != nil {
-		return fmt.Errorf("greška pri pisanju u BlockManager: %v", err)
-	}
-
 	// Resetujemo Memtable
 	m.data = make(map[string][]byte)
-
-	fmt.Printf("Podaci uspešno serijalizovani u SSTable fajl: %s\n", filename)
-	return nil
+	return &records
 }
+
+// NAPOMENA - OVU LOGIKU DOLE PREBACITI U SSTABLE
+
+// // Inicijalizacija Bloom filtera nad SSTable
+// bf := probabilistic.CreateBF(m.maxSize, 99)
+// // Serijalizacija podataka u SSTable format
+// blockData := make([]byte, 0, m.maxSize*10)
+// for _, key := range keys {
+// 	value := m.data[key]
+
+// 	// Dužina ključa i vrednosti
+// 	keyLen := len(key)
+// 	valueLen := len(value)
+
+// 	// Serijalizacija u binarni format: [keyLen][key][valueLen][value]
+// 	blockData = append(blockData, byte(keyLen))
+// 	blockData = append(blockData, []byte(key)...)
+// 	blockData = append(blockData, byte(valueLen))
+// 	blockData = append(blockData, value...)
+// }
+
+// // Dodavanje paddinga
+// padding := BlockSize - (len(blockData) % BlockSize)
+// if padding < BlockSize {
+// 	blockData = append(blockData, make([]byte, padding)...)
+// }
+
+// // Izgradnja Merkle stabla nad SSTable
+// mt := merkletree.NewMerkleTree()
+// mt.ConstructMerkleTree(blockData, m.blockManager.blockSize)
+
+// // Ovde treba dodati zapisivanje Bloom filtera i Merkle stabla u fajl
+// // Možda lakše da prvo to bude upisano u odvojene fajlove
+
+// // Pisanje podataka u SSTable fajl koristeći BlockManager
+// err := m.blockManager.WriteBlock(filename, blockData)
+// if err != nil {
+// 	return fmt.Errorf("greška pri pisanju u BlockManager: %v", err)
+// }

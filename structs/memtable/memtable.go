@@ -11,6 +11,12 @@ import (
 	"projekat/structs/wal"
 )
 
+// Jedan zapis ključ - vrednost
+type Record struct {
+	Key   string
+	Value []byte
+}
+
 // MemtableInterface definise zajednicki interfejs za sve implementacije Memtable-a
 type MemtableInterface interface {
 	Add(key string, value []byte) error
@@ -18,8 +24,8 @@ type MemtableInterface interface {
 	Get(key string) ([]byte, bool)
 	// PrintData()
 	LoadFromWAL(file *os.File, offset int64) (int64, error)
-	SerializeToSSTable(filename string, BlockSize int) error
-	IsFull() (bool)
+	Flush() *[]Record
+	IsFull() bool
 }
 
 // Greška ukoliko je Memtable popunjen

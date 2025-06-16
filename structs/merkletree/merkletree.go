@@ -21,11 +21,11 @@ func NewMerkleTree() MerkleTree {
 	return MerkleTree{}
 }
 
-func (mt *MerkleTree) ConstructMerkleTree(bytes []byte) {
+func (mt *MerkleTree) ConstructMerkleTree(bytes []byte, blockSize int) {
 	// Generisanje listova stabla
 	leaves := make([]MerkleNode, 0)
-	for i := 0; i < len(bytes); i += 256 {
-		chunk := bytes[i : i+256]
+	for i := 0; i < len(bytes); i += blockSize {
+		chunk := bytes[i : i+blockSize]
 		hash := md5.Sum(chunk)
 		leaf := MerkleNode{hash[:], nil, nil}
 		leaves = append(leaves, leaf)
