@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"projekat/config"
-	"projekat/structs/blockmanager"
+	//"projekat/structs/blockmanager"
 	"projekat/structs/containers"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
@@ -51,7 +51,7 @@ func main() {
 
 	// Inicijalizacija BlockManager-a
 	// napomena - sad baca grešku jer nije nigde uključen - treba ga ubaciti u wal i sstable
-	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
+	//bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
 	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
 	mtIndex := 0
