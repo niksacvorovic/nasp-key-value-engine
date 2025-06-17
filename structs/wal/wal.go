@@ -27,7 +27,7 @@ type Record struct {
 
 // Struktura Write-Ahead Log-a (WAL)
 type WAL struct {
-	dir     string        // Direktorijum za segmente
+	Dir     string        // Direktorijum za segmente
 	file    *os.File      // Trenutni segmenti fajl
 	buffer  *bytes.Buffer // Buffer
 	maxSeg  int           // Maksimalno zapisa po segmentu
@@ -65,12 +65,12 @@ func NewWAL(dirPath string, maxSeg int) (*WAL, error) {
 
 	// Vrati instancu WAL-a
 	return &WAL{
-		dir:     dirPath,
+		Dir:     dirPath,
 		file:    file,
 		buffer:  new(bytes.Buffer),
 		maxSeg:  maxSeg,
 		count:   0,
-		segNum:  segNum + 1,
+		segNum:  segNum + 1, // Trenutno da bi se izbjeglo prekoracenje u jednom segmentu samo odmah predje na novi bez provjera da li je stari potpuno pun
 		oldSegs: []string{},
 	}, nil
 }
@@ -122,7 +122,7 @@ func (w *WAL) rotateSegment() error {
 
 	// Kreiraj novi segment
 	w.segNum++
-	newPath := filepath.Join(w.dir, fmt.Sprintf("wal_%04d.log", w.segNum))
+	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.segNum))
 	newFile, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err

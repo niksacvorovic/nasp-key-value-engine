@@ -13,4 +13,5 @@ type Config struct {
 	FilePath          string `json:"FilePath"`
 	TokenRate         int    `json:"TokenRate"`
 	TokenInterval     int    `json:"TokenInterval"`
+	WalMaxSeg         int    `json:"WalMaxSeg"`
 }

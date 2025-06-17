@@ -29,13 +29,11 @@ type MemtableInterface interface {
 }
 
 // Greška ukoliko je Memtable popunjen
-var MemtableFull error = errors.New("memtable full")
+var ErrMemtableFull error = errors.New("memtable full")
 
 // Utility funkcije za konverziju tipova
-func TimestampToBytes(ts int64) []byte {
-	buf := new(bytes.Buffer)
-	binary.Write(buf, binary.LittleEndian, ts)
-	return buf.Bytes()
+func TimestampToBytes(ts [16]byte) []byte {
+	return ts[:]
 }
 
 func BoolToByte(b bool) byte {
@@ -62,7 +60,7 @@ func LoadFromWALHelper(file *os.File, memtable MemtableInterface, offset int64) 
 			memtable.Delete(string(record.Key))
 		} else {
 			err = memtable.Add(string(record.Key), record.Value)
-			if err == MemtableFull {
+			if err == ErrMemtableFull {
 				offset, _ = file.Seek(0, 1)
 				return offset, err
 			}
@@ -74,64 +72,59 @@ func LoadFromWALHelper(file *os.File, memtable MemtableInterface, offset int64) 
 // readRecord cita zapis iz WAL fajla
 func readRecord(file *os.File) (*wal.Record, error) {
 	var crc uint32
-	var timestamp int64
-	var tombstone bool
-	var keySize, valueSize uint8
+	var record wal.Record
 
-	// Citanje zaglavlja zapisa
+	// Read CRC first
 	err := binary.Read(file, binary.LittleEndian, &crc)
 	if err != nil {
 		return nil, err
 	}
-	err = binary.Read(file, binary.LittleEndian, &timestamp)
+
+	// Read the rest of the record
+	err = binary.Read(file, binary.LittleEndian, &record.Timestamp)
 	if err != nil {
 		return nil, err
 	}
-	err = binary.Read(file, binary.LittleEndian, &tombstone)
+	err = binary.Read(file, binary.LittleEndian, &record.Tombstone)
 	if err != nil {
 		return nil, err
 	}
-	err = binary.Read(file, binary.LittleEndian, &keySize)
+	err = binary.Read(file, binary.LittleEndian, &record.KeySize)
 	if err != nil {
 		return nil, err
 	}
-	err = binary.Read(file, binary.LittleEndian, &valueSize)
+	err = binary.Read(file, binary.LittleEndian, &record.ValueSize)
 	if err != nil {
 		return nil, err
 	}
 
-	// Citanje kljuca i vrednosti
-	key := make([]byte, keySize)
-	_, err = file.Read(key)
-	if err != nil {
-		return nil, err
-	}
-	value := make([]byte, valueSize)
-	_, err = file.Read(value)
+	// Read key and value
+	record.Key = make([]byte, record.KeySize)
+	_, err = file.Read(record.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	// Verifikacija CRC
-	data := append([]byte{}, TimestampToBytes(timestamp)...)
-	data = append(data, BoolToByte(tombstone))
-	data = append(data, keySize, valueSize)
-	data = append(data, key...)
-	data = append(data, value...)
-	calculatedCRC := crc32.ChecksumIEEE(data)
+	record.Value = make([]byte, record.ValueSize)
+	_, err = file.Read(record.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify CRC
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.LittleEndian, record.Timestamp)
+	binary.Write(&buf, binary.LittleEndian, record.Tombstone)
+	binary.Write(&buf, binary.LittleEndian, record.KeySize)
+	binary.Write(&buf, binary.LittleEndian, record.ValueSize)
+	buf.Write(record.Key)
+	buf.Write(record.Value)
+
+	calculatedCRC := crc32.ChecksumIEEE(buf.Bytes())
 	if calculatedCRC != crc {
-		return nil, fmt.Errorf("ne odgovara CRC")
+		return nil, fmt.Errorf("CRC mismatch - data corruption detected")
 	}
 
-	return &wal.Record{
-		CRC:       crc,
-		Timestamp: timestamp,
-		Tombstone: tombstone,
-		KeySize:   keySize,
-		ValueSize: valueSize,
-		Key:       key,
-		Value:     value,
-	}, nil
+	record.CRC = crc
+	return &record, nil
 }
-
-// Potencijalno možemo premjestiti još generalnih funckija u interfejs da nema redundantnog koda

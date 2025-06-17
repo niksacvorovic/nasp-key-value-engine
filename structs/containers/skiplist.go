@@ -180,7 +180,7 @@ func NewSkipListMemtable(maxHeight, maxSize int) *SkipListMemtable {
 
 func (m *SkipListMemtable) Add(key string, value []byte) error {
 	if m.size >= m.maxSize {
-		return memtable.MemtableFull
+		return memtable.ErrMemtableFull
 	}
 	newelem := m.data.WriteElement(key, value)
 	if newelem {

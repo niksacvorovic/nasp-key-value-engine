@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -29,22 +31,11 @@ func main() {
 	// Inicijalizuj Config strukturu
 	var cfg config.Config
 
-	// Unmarshal the JSON data into the Config struct
+	// Unmarshal JSON podatek u Config strukturu
 	err = json.Unmarshal(data, &cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	// Definisanje putanje do log fajla
-	walFilePath := "wal.log"
-
-	// Inicijalizuj WAL
-	wal, err := wal.NewWAL(walFilePath, cfg.WALmaxSegmentSize)
-	if err != nil {
-		fmt.Printf("Greska prilikom inicijalizovanja WAL: %v\n", err)
-		return
-	}
-	defer wal.Close()
 
 	// Inicijalizacija LRU keša
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
@@ -61,39 +52,67 @@ func main() {
 		for i := 0; i < cfg.Num_memtables; i++ {
 			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize)
 		}
-		fmt.Println("hashMap")
 	} else if cfg.Memtable_struct == "skipList" {
 		for i := 0; i < cfg.Num_memtables; i++ {
 			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
-		fmt.Println("skipList")
 
 	} else if cfg.Memtable_struct == "BStablo" {
 		// NewBStabloMemtable
-		fmt.Println("BStablo")
 	}
+
+	// -------------------------------------------------------------------------------------------------------------------------------
+	// WAL (Write Ahead Log)
+	// -------------------------------------------------------------------------------------------------------------------------------
+
+	// Put do foldera sa wal logovima
+	walDir := filepath.Join("data", "wal")
+
+	// Inicijalizacija WAL-a
+	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxSeg)
+	if err != nil {
+		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
+	}
+	defer walInstance.Close()
 
 	// Ucitavanje podataka is WAL-a u Memtable
-
-	var offset int64 = 0
-	file, err := os.Open(walFilePath)
+	files, err := os.ReadDir(walInstance.Dir)
 	if err != nil {
-		fmt.Errorf("ne mogu otvoriti WAL fajl: %v", err)
+		panic(err)
 	}
-	for {
-		offset, err = memtableInstances[mtIndex].LoadFromWAL(file, offset)
-		if err == memtable.MemtableFull {
-			mtIndex++
-			continue
-		} else if err != nil {
-			fmt.Println("Greska pri ucitavanju iz WAL-a", err)
-			return
-		} else {
-			break
+
+	for _, f := range files {
+		if strings.HasPrefix(f.Name(), "wal_") && strings.HasSuffix(f.Name(), ".log") {
+			segmentPath := filepath.Join(walInstance.Dir, f.Name())
+
+			recordChan, errChan := walInstance.ReadRecords(segmentPath)
+
+			for record := range recordChan {
+				// Dodavanje u Memtable
+				memtableInstances[mtIndex].Add(string(record.Key), record.Value)
+
+				// Provera da li je trenutni Memtable pun
+				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
+					mtIndex++
+					continue
+				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
+					tables := make([][]memtable.Record, cfg.Num_memtables)
+					for i := 0; i < cfg.Num_memtables; i++ {
+						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
+						tables = append(tables, *memtableInstances[i].Flush())
+						// ovde dodati izgradnju sstabele
+					}
+				}
+
+			}
+
+			if err := <-errChan; err != nil && err != io.EOF {
+				fmt.Println("Greška pri čitanju:", err)
+			}
 		}
 	}
-
-	file.Close()
 
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// Interfejs petlja
@@ -180,7 +199,7 @@ func main() {
 			}
 
 			// Dodavanje zapisa u Write-Ahead Log (WAL)
-			err = wal.AppendRecord(tombstone, key, value)
+			err = walInstance.AppendRecord(tombstone, key, value)
 			if err != nil {
 				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
 				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
@@ -265,7 +284,7 @@ func main() {
 
 			// Izbrisi iz WAL-a i Memtable-a
 			if found {
-				err = wal.AppendRecord(tombstone, key, value)
+				err = walInstance.AppendRecord(tombstone, key, value)
 				if err != nil {
 					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
 				} else {
