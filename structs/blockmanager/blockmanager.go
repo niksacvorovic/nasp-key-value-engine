@@ -9,14 +9,14 @@ import (
 type BlockManager struct {
 	blockCache *BlockCache
 	blockSize  int
-	block_idx int
+	block_idx  int
 }
 
 // Funckija koja vraća novi Block Manager
 func NewBlockManager(blockSize int, capacity int) *BlockManager {
 	return &BlockManager{
 		blockCache: NewBlockCache(capacity), blockSize: blockSize,
-		block_idx:  0,
+		block_idx: 0,
 	}
 }
 
@@ -49,28 +49,35 @@ func (bm *BlockManager) ReadBlock(filePath string, blockIndex int) []byte {
 
 // Funkcija za pisanje blokova
 func (bm *BlockManager) WriteBlock(filePath string, data []byte) error {
-
-	if len(data) != bm.blockSize {
-		return errors.New("data size does not match block size")
+	// Greška: podaci su veći od veličine bloka
+	if len(data) > bm.blockSize {
+		return errors.New("data does not fit into a block")
 	}
+
+	// Dodaj padding da blokovi budu uniformne dužine
+	padded := make([]byte, bm.blockSize)
+	copy(padded, data)
 
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer file.Close()
 
-	_, err = file.WriteAt(data, int64(bm.block_idx*bm.blockSize))
+	// Zapisi blok u fajl
+	offset := int64(bm.block_idx * bm.blockSize)
+	_, err = file.WriteAt(padded, offset)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	// Azuriraj block_idx
-	bm.block_idx ++
+	// Ažuriraj block_idx
+	bm.block_idx++
 
-	sign := Signature{filePath, bm.block_idx}
-	if _, ok := bm.blockCache.hash[sign]; ok {
-		bm.blockCache.hash[sign].data = data
+	// Ažuriraj cache ako postoji
+	sign := Signature{filePath, bm.block_idx - 1}
+	if block, ok := bm.blockCache.hash[sign]; ok {
+		block.data = padded
 	}
 
 	return nil
