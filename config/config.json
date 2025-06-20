@@ -3,12 +3,12 @@
     "Num_memtables": 5,
     "Memtable_struct": "hashMap", 
     "SkipListLevelNum": 5,
-    "WALmaxSegmentSize": 5,
-    "BlockSize": 4096,
+    "BlockSize": 256,
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
     "FilePath": "file.data",
     "TokenRate": 100,
     "TokenInterval": 60,
-    "WalMaxSeg": 5
+    "WalMaxRecordsPerSegment": 5,
+    "WalBlokcsPerSegment": 5
 }

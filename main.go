@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -64,7 +63,7 @@ func main() {
 	walDir := filepath.Join("data", "wal")
 
 	// Inicijalizacija WAL-a sa BlockManagerom
-	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxSeg, cfg.BlockSize, cfg.BlockCacheSize)
+	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxRecordsPerSegment, cfg.WalBlokcsPerSegment, cfg.BlockSize, cfg.BlockCacheSize)
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
@@ -80,11 +79,14 @@ func main() {
 		if strings.HasPrefix(f.Name(), "wal_") && strings.HasSuffix(f.Name(), ".log") {
 			segmentPath := filepath.Join(walInstance.Dir, f.Name())
 
-			recordChan, errChan := walInstance.ReadRecords(segmentPath)
+			records, err := walInstance.ReadRecords(segmentPath)
+			if err != nil {
+				fmt.Println("Greška pri čitanju:", err)
+			}
 
-			for record := range recordChan {
+			for idx := 0; idx < len(records); idx++ {
 				// Dodavanje u Memtable
-				memtableInstances[mtIndex].Add(string(record.Key), record.Value)
+				memtableInstances[mtIndex].Add(string(records[idx].Key), records[idx].Value)
 
 				// Provera da li je trenutni Memtable pun
 				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
@@ -101,10 +103,6 @@ func main() {
 					}
 				}
 
-			}
-
-			if err := <-errChan; err != nil && err != io.EOF {
-				fmt.Println("Greška pri čitanju:", err)
 			}
 		}
 	}

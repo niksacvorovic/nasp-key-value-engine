@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"projekat/structs/blockmanager"
@@ -28,18 +27,19 @@ type Record struct {
 
 // Struktura Write-Ahead Log-a (WAL)
 type WAL struct {
-	bm      *blockmanager.BlockManager // Blockmanager
-	Dir     string                     // Direktorijum za segmente
-	file    *os.File                   // Trenutni segmenti fajl
-	buffer  *bytes.Buffer              // Buffer
-	maxSeg  int                        // Maksimalno zapisa po segmentu
-	count   int                        // Brojac trenutnig zapisa
-	segNum  int                        // Trenutni broj segmenta
-	oldSegs []string                   // Stari segmenti koji nisu perzistirani u SSTable-u
+	bm                      *blockmanager.BlockManager // Blockmanager
+	Dir                     string                     // Direktorijum za segmente
+	file                    *os.File                   // Trenutni segmenti fajl
+	buffer                  *bytes.Buffer              // Buffer
+	walMaxRecordsPerSegment int                        // Maksimalno zapisa po segmentu
+	walBlokcsPerSegment     int                        // Broj blokova po segmentu
+	recordCount             int                        // Brojac zapisa u segmentu
+	segNum                  int                        // Trenutni broj segmenta
+	oldSegs                 []string                   // Stari segmenti koji nisu perzistirani u SSTable-u
 }
 
 // NewWAL kreira novu instancu WAL-a
-func NewWAL(dirPath string, maxSeg int, blockSize int, blockCacheSize int) (*WAL, error) {
+func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlokcsPerSegment int, blockSize int, blockCacheSize int) (*WAL, error) {
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return nil, err
 	}
@@ -67,14 +67,15 @@ func NewWAL(dirPath string, maxSeg int, blockSize int, blockCacheSize int) (*WAL
 
 	// Vrati instancu WAL-a
 	return &WAL{
-		bm:      blockmanager.NewBlockManager(blockSize, blockCacheSize),
-		Dir:     dirPath,
-		file:    file,
-		buffer:  new(bytes.Buffer),
-		maxSeg:  maxSeg,
-		count:   0,
-		segNum:  segNum + 1, // Novi broj segmenta
-		oldSegs: []string{},
+		bm:                      blockmanager.NewBlockManager(blockSize, blockCacheSize),
+		Dir:                     dirPath,
+		file:                    file,
+		buffer:                  new(bytes.Buffer),
+		walMaxRecordsPerSegment: walMaxRecordsPerSegment,
+		walBlokcsPerSegment:     walBlokcsPerSegment,
+		recordCount:             0,
+		segNum:                  segNum + 1, // Novi broj segmenta
+		oldSegs:                 []string{},
 	}, nil
 }
 
@@ -106,20 +107,26 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
 	binary.Write(w.buffer, binary.LittleEndian, record.CRC)
 	w.buffer.Write(buf.Bytes())
 
-	w.count++
-	if w.count >= w.maxSeg {
+	// Zapisi zapis putem BlockManager-a
+	err := w.bm.WriteBlock(w.file.Name(), w.buffer.Bytes())
+	if err != nil {
+		return err
+	}
+
+	// Resetuj buffer
+	w.buffer.Reset()
+
+	// Ako smo stigli do maksimalnog broja zapisa ili blokova prelazimo na sledeci segment
+	w.recordCount++
+	if w.recordCount >= w.walMaxRecordsPerSegment || w.bm.Block_idx >= w.walBlokcsPerSegment {
 		return w.rotateSegment()
 	}
+
 	return nil
 }
 
 // rotateSegment kreira novi segmentni fajl
 func (w *WAL) rotateSegment() error {
-	// Flushuj trenutnio buffer
-	if err := w.flush(); err != nil {
-		return err
-	}
-
 	// Dodaj trenutni segment u stare segmente
 	w.oldSegs = append(w.oldSegs, w.file.Name())
 
@@ -131,104 +138,94 @@ func (w *WAL) rotateSegment() error {
 		return err
 	}
 
+	// Resetuj sve vrijednosti
 	w.file.Close()
 	w.file = newFile
-	w.count = 0
+	w.recordCount = 0
+	w.bm.Block_idx = 0
 	return nil
 }
 
-// Close zatvara WAL fajl i flushuje sve preostale podatke na disk
+// Close zatvara WAL fajl
 func (w *WAL) Close() error {
-	// Flushuj preostale podatke iz buffera
-	if w.buffer.Len() > 0 {
-		if err := w.flush(); err != nil {
-			return err
-		}
-	}
 	return w.file.Close()
 }
 
 // ReadRecords cita jedan po jedan zapis iz segmenta
-func (wal *WAL) ReadRecords(segmentPath string) (chan Record, chan error) {
-	recordChan := make(chan Record)
-	errChan := make(chan error, 1)
+func (w *WAL) ReadRecords(segmentPath string) ([]Record, error) {
+	records := make([]Record, 0, w.walBlokcsPerSegment)
 
-	go func() {
-		defer close(recordChan)
-		defer close(errChan)
-
-		file, err := os.Open(segmentPath)
+	for idx := 0; idx < w.walBlokcsPerSegment; idx++ {
+		// Procitaj zapi
+		block, err := w.bm.ReadBlock(segmentPath, idx)
 		if err != nil {
-			errChan <- err
-			return
+			return nil, err
 		}
-		defer file.Close()
 
-		for {
-			var record Record
-			var crc uint32
-
-			// Procitaj CRC
-			if err := binary.Read(file, binary.LittleEndian, &crc); err != nil {
-				if err == io.EOF {
-					break
-				}
-				errChan <- err
-				return
-			}
-
-			// Procitaj ostatak zapisa
-			if err := binary.Read(file, binary.LittleEndian, &record.Timestamp); err != nil {
-				errChan <- err
-				return
-			}
-			if err := binary.Read(file, binary.LittleEndian, &record.Tombstone); err != nil {
-				errChan <- err
-				return
-			}
-			if err := binary.Read(file, binary.LittleEndian, &record.KeySize); err != nil {
-				errChan <- err
-				return
-			}
-			if err := binary.Read(file, binary.LittleEndian, &record.ValueSize); err != nil {
-				errChan <- err
-				return
-			}
-
-			record.Key = make([]byte, record.KeySize)
-			if _, err := file.Read(record.Key); err != nil {
-				errChan <- err
-				return
-			}
-
-			record.Value = make([]byte, record.ValueSize)
-			if _, err := file.Read(record.Value); err != nil {
-				errChan <- err
-				return
-			}
-
-			// Verifikuj CRC
-			var buf bytes.Buffer
-			binary.Write(&buf, binary.LittleEndian, record.Timestamp)
-			binary.Write(&buf, binary.LittleEndian, record.Tombstone)
-			binary.Write(&buf, binary.LittleEndian, record.KeySize)
-			binary.Write(&buf, binary.LittleEndian, record.ValueSize)
-			buf.Write(record.Key)
-			buf.Write(record.Value)
-
-			if crc32.ChecksumIEEE(buf.Bytes()) != crc {
-				errChan <- errors.New("CRC mismatch - data corruption detected")
-			}
-
-			record.CRC = crc
-			recordChan <- record
+		// Ako je zapis prazan predji na sledeci
+		if isBlockEmpty(block) {
+			continue
 		}
-	}()
 
-	return recordChan, errChan
+		// Parsiraj zapis
+		rec, err := parseRecord(block)
+		if err != nil {
+			return nil, err
+		}
+
+		records = append(records, rec)
+	}
+
+	return records, nil
+}
+
+// paraseRecord parsiraj jedan zapis tipa []byta u tip Record
+func parseRecord(block []byte) (Record, error) {
+	var rec Record
+
+	if len(block) < 37 {
+		return rec, errors.New("block too small for record header")
+	}
+
+	// Prvo procitaj CRC (prvih 4 bajta)
+	rec.CRC = binary.LittleEndian.Uint32(block[0:4])
+
+	// Racunaj CRC nad ostalim bajtovima (od 4 pa do kraja podataka)
+	// Racunaj ukupnu duzinu na osnovu KeySize i ValueSize
+	keySize := binary.LittleEndian.Uint64(block[21:29])
+	valueSize := binary.LittleEndian.Uint64(block[29:37])
+	expectedLen := 37 + int(keySize) + int(valueSize)
+
+	if len(block) < expectedLen {
+		return rec, errors.New("block too small for key and value")
+	}
+
+	// Citaj sve osim CRC za validaciju
+	dataForCRC := block[4:expectedLen]
+
+	// Izracunaj CRC na osnovu tih podataka i provjeri da li je ispravan
+	calculatedCRC := crc32.ChecksumIEEE(dataForCRC)
+	if calculatedCRC != rec.CRC {
+		return rec, errors.New("CRC mismatch - data corruption detected")
+	}
+
+	// Ako je CRC OK, popuni ostala polja
+	copy(rec.Timestamp[:], block[4:20])
+	rec.Tombstone = block[20] != 0
+	rec.KeySize = keySize
+	rec.ValueSize = valueSize
+
+	rec.Key = make([]byte, rec.KeySize)
+	copy(rec.Key, block[37:37+rec.KeySize])
+
+	rec.Value = make([]byte, rec.ValueSize)
+	copy(rec.Value, block[37+rec.KeySize:expectedLen])
+
+	return rec, nil
 }
 
 // MarkSegmentAsPersisted obiljezava segment perzistiranim u SSTable-u
+// TODO vjerovatno izmjeniti kad dodje do brisanja
 func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
 	// Izbrisi iz starih segmenata ako postoji
 	for i, seg := range w.oldSegs {
@@ -240,13 +237,15 @@ func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
 	return nil
 }
 
-// flush upisuje bufferovane podatke u WAL fajl i resetuje buffer
-func (w *WAL) flush() error {
-	// Upisi podatke putem Block Managera
-	err := w.bm.WriteBlock(w.file.Name(), w.buffer.Bytes())
-
-	// Resetuj WAL buffer
-	w.buffer.Reset()
-
-	return err
+// isBlockEmpty provjerava da li je blok prazan (ako je prvih 37 bajtova 0)
+func isBlockEmpty(block []byte) bool {
+	if len(block) < 37 {
+		return false
+	}
+	for i := 0; i < 37; i++ {
+		if block[i] != 0 {
+			return false
+		}
+	}
+	return true
 }
