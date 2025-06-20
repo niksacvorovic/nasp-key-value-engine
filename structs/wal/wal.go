@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"projekat/structs/blockmanager"
 	"strconv"
 	"strings"
 	"time"
@@ -27,17 +28,18 @@ type Record struct {
 
 // Struktura Write-Ahead Log-a (WAL)
 type WAL struct {
-	Dir     string        // Direktorijum za segmente
-	file    *os.File      // Trenutni segmenti fajl
-	buffer  *bytes.Buffer // Buffer
-	maxSeg  int           // Maksimalno zapisa po segmentu
-	count   int           // Brojac trenutnig zapisa
-	segNum  int           // Trenutni broj segmenta
-	oldSegs []string      // Stari segmenti koji nisu perzistirani u SSTable-u
+	bm      *blockmanager.BlockManager // Blockmanager
+	Dir     string                     // Direktorijum za segmente
+	file    *os.File                   // Trenutni segmenti fajl
+	buffer  *bytes.Buffer              // Buffer
+	maxSeg  int                        // Maksimalno zapisa po segmentu
+	count   int                        // Brojac trenutnig zapisa
+	segNum  int                        // Trenutni broj segmenta
+	oldSegs []string                   // Stari segmenti koji nisu perzistirani u SSTable-u
 }
 
 // NewWAL kreira novu instancu WAL-a
-func NewWAL(dirPath string, maxSeg int) (*WAL, error) {
+func NewWAL(dirPath string, maxSeg int, blockSize int, blockCacheSize int) (*WAL, error) {
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
 		return nil, err
 	}
@@ -56,7 +58,7 @@ func NewWAL(dirPath string, maxSeg int) (*WAL, error) {
 		}
 	}
 
-	// Otvori fajl
+	// Otvori fajl sledeceg segmenta
 	filePath := filepath.Join(dirPath, fmt.Sprintf("wal_%04d.log", segNum+1))
 	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
@@ -65,12 +67,13 @@ func NewWAL(dirPath string, maxSeg int) (*WAL, error) {
 
 	// Vrati instancu WAL-a
 	return &WAL{
+		bm:      blockmanager.NewBlockManager(blockSize, blockCacheSize),
 		Dir:     dirPath,
 		file:    file,
 		buffer:  new(bytes.Buffer),
 		maxSeg:  maxSeg,
 		count:   0,
-		segNum:  segNum + 1, // Trenutno da bi se izbjeglo prekoracenje u jednom segmentu samo odmah predje na novi bez provjera da li je stari potpuno pun
+		segNum:  segNum + 1, // Novi broj segmenta
 		oldSegs: []string{},
 	}, nil
 }

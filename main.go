@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"projekat/config"
-	//"projekat/structs/blockmanager"
 	"projekat/structs/containers"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
@@ -40,10 +39,6 @@ func main() {
 	// Inicijalizacija LRU keša
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
 
-	// Inicijalizacija BlockManager-a
-	// napomena - sad baca grešku jer nije nigde uključen - treba ga ubaciti u wal i sstable
-	//bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
-
 	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
 	mtIndex := 0
 
@@ -68,8 +63,8 @@ func main() {
 	// Put do foldera sa wal logovima
 	walDir := filepath.Join("data", "wal")
 
-	// Inicijalizacija WAL-a
-	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxSeg)
+	// Inicijalizacija WAL-a sa BlockManagerom
+	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxSeg, cfg.BlockSize, cfg.BlockCacheSize)
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
