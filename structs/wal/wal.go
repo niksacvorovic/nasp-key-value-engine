@@ -242,7 +242,11 @@ func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
 
 // flush upisuje bufferovane podatke u WAL fajl i resetuje buffer
 func (w *WAL) flush() error {
-	_, err := w.file.Write(w.buffer.Bytes())
+	// Upisi podatke putem Block Managera
+	err := w.bm.WriteBlock(w.file.Name(), w.buffer.Bytes())
+
+	// Resetuj WAL buffer
 	w.buffer.Reset()
+
 	return err
 }

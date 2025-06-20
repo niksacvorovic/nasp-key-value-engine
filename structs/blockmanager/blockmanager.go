@@ -9,14 +9,14 @@ import (
 type BlockManager struct {
 	blockCache *BlockCache
 	blockSize  int
-	block_idx int
+	block_idx  int
 }
 
 // Funckija koja vraća novi Block Manager
 func NewBlockManager(blockSize int, capacity int) *BlockManager {
 	return &BlockManager{
 		blockCache: NewBlockCache(capacity), blockSize: blockSize,
-		block_idx:  0,
+		block_idx: 0,
 	}
 }
 
@@ -66,7 +66,7 @@ func (bm *BlockManager) WriteBlock(filePath string, data []byte) error {
 	}
 
 	// Azuriraj block_idx
-	bm.block_idx ++
+	bm.block_idx++
 
 	sign := Signature{filePath, bm.block_idx}
 	if _, ok := bm.blockCache.hash[sign]; ok {
