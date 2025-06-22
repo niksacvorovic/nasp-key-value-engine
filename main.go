@@ -67,44 +67,31 @@ func main() {
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
-	defer walInstance.Close()
 
-	// Ucitavanje podataka is WAL-a u Memtable
-	files, err := os.ReadDir(walInstance.Dir)
+	records, err := walInstance.ReadRecords()
 	if err != nil {
-		panic(err)
+		fmt.Println("Greška pri čitanju:", err)
 	}
 
-	for _, f := range files {
-		if strings.HasPrefix(f.Name(), "wal_") && strings.HasSuffix(f.Name(), ".log") {
-			segmentPath := filepath.Join(walInstance.Dir, f.Name())
+	for idx := 0; idx < len(records); idx++ {
+		// Dodavanje u Memtable
+		memtableInstances[mtIndex].Add(string(records[idx].Key), records[idx].Value)
 
-			records, err := walInstance.ReadRecords(segmentPath)
-			if err != nil {
-				fmt.Println("Greška pri čitanju:", err)
-			}
-
-			for idx := 0; idx < len(records); idx++ {
-				// Dodavanje u Memtable
-				memtableInstances[mtIndex].Add(string(records[idx].Key), records[idx].Value)
-
-				// Provera da li je trenutni Memtable pun
-				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
-					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
-					mtIndex++
-					continue
-				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
-					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
-					tables := make([][]memtable.Record, cfg.Num_memtables)
-					for i := 0; i < cfg.Num_memtables; i++ {
-						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
-						tables = append(tables, *memtableInstances[i].Flush())
-						// ovde dodati izgradnju sstabele
-					}
-				}
-
+		// Provera da li je trenutni Memtable pun
+		if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+			// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
+			mtIndex++
+			continue
+		} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+			// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
+			tables := make([][]memtable.Record, cfg.Num_memtables)
+			for i := 0; i < cfg.Num_memtables; i++ {
+				// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
+				tables = append(tables, *memtableInstances[i].Flush())
+				// ovde dodati izgradnju sstabele
 			}
 		}
+
 	}
 
 	// -------------------------------------------------------------------------------------------------------------------------------
