@@ -71,12 +71,10 @@ func calculateCRC(record Record) uint32 {
 
 // Kreiranje SSTable sa Bloom filterom, Merkle stablom i summary zapisima
 func CreateSSTable(records []Record, sst *SSTable) error {
-	// Sortiranje po ključu
 	sort.Slice(records, func(i, j int) bool {
 		return bytes.Compare(records[i].Key, records[j].Key) < 0
 	})
 
-	// Otvaranje fajlova
 	dataFile, err := os.Create(sst.DataFilePath)
 	if err != nil {
 		return err
@@ -101,7 +99,6 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 	}
 	defer filterFile.Close()
 
-	// Kreiranje Bloom filtera
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 
 	summaryEntries := []SummaryEntry{}
@@ -136,7 +133,6 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 		currentOffset += uint64(4 + 8 + 1 + 8 + 8 + len(record.Key) + len(record.Value))
 	}
 
-	// Upis summary fajla
 	minKey := records[0].Key
 	maxKey := records[len(records)-1].Key
 
@@ -154,14 +150,12 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 		binary.Write(summaryFile, binary.LittleEndian, entry.Offset)
 	}
 
-	// Serijalizacija Bloom filtera
 	filterBytes := bloom.Serialize()
 	_, err = filterFile.Write(filterBytes)
 	if err != nil {
 		return err
 	}
 
-	// Kreiranje Merkle stabla pomoću tvoje logike
 	dataFileForMerkle, err := os.Open(sst.DataFilePath)
 	if err != nil {
 		return err
@@ -176,7 +170,6 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 	merkleTree := merkletree.NewMerkleTree()
 	merkleTree.ConstructMerkleTree(data, 64)
 
-	// Serijalizacija u bajt niz i upis u fajl
 	metadataFile, err := os.Create(sst.MetadataFilePath)
 	if err != nil {
 		return err
@@ -189,16 +182,14 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 		return err
 	}
 
-	// Postavi Bloom filter i Merkle stablo u SSTable
 	sst.Filter = &bloom
 	sst.Metadata = &merkleTree
 
 	return nil
 }
 
-// Zapisivanje data bloka u datoteku sa sortiranjem, timestampom i CRC-om
+// Zapisivanje data bloka u datoteku
 func WriteDataFile(records []Record, filePath string) error {
-	// Sortiranje pre pisanja
 	sort.Slice(records, func(i, j int) bool {
 		return bytes.Compare(records[i].Key, records[j].Key) < 0
 	})
@@ -239,7 +230,7 @@ func WriteDataFile(records []Record, filePath string) error {
 	return nil
 }
 
-// Citanje data zapisa uz CRC proveru
+// Citanje data zapisa
 func ReadRecordAtOffset(filePath string, offset int64) (*Record, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
