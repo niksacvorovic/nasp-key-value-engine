@@ -1,6 +1,6 @@
 {
     "MaxMemtableSize": 10,
-    "Num_memtables": 5,
+    "MemtableNum": 5,
     "Memtable_struct": "hashMap", 
     "SkipListLevelNum": 5,
     "WALmaxSegmentSize": 5,

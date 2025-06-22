@@ -40,20 +40,16 @@ func main() {
 	// Inicijalizacija LRU keša
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
 
-	// Inicijalizacija BlockManager-a
-	// napomena - sad baca grešku jer nije nigde uključen - treba ga ubaciti u wal i sstable
-	//bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
-
-	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
+	memtableInstances := make([]memtable.MemtableInterface, cfg.MemtableNum)
 	mtIndex := 0
 
 	// Inicijalizacija niza instanci Memtable-a
 	if cfg.Memtable_struct == "hashMap" {
-		for i := 0; i < cfg.Num_memtables; i++ {
+		for i := 0; i < cfg.MemtableNum; i++ {
 			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize)
 		}
 	} else if cfg.Memtable_struct == "skipList" {
-		for i := 0; i < cfg.Num_memtables; i++ {
+		for i := 0; i < cfg.MemtableNum; i++ {
 			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 
@@ -73,7 +69,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
-	defer walInstance.Close()
+	// defer walInstance.Close()
 
 	// Ucitavanje podataka is WAL-a u Memtable
 	files, err := os.ReadDir(walInstance.Dir)
@@ -92,14 +88,14 @@ func main() {
 				memtableInstances[mtIndex].Add(string(record.Key), record.Value)
 
 				// Provera da li je trenutni Memtable pun
-				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.MemtableNum-1 {
 					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
 					mtIndex++
 					continue
-				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.MemtableNum-1 {
 					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
-					tables := make([][]memtable.Record, cfg.Num_memtables)
-					for i := 0; i < cfg.Num_memtables; i++ {
+					tables := make([][]memtable.Record, cfg.MemtableNum)
+					for i := 0; i < cfg.MemtableNum; i++ {
 						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
 						tables = append(tables, *memtableInstances[i].Flush())
 						// ovde dodati izgradnju sstabele
@@ -209,16 +205,16 @@ func main() {
 				fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
 
 				// Provera da li je trenutni Memtable pun
-				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
+				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.MemtableNum-1 {
 					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
 					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
 					mtIndex++
 					continue
-				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
+				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.MemtableNum-1 {
 					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
 					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
-					tables := make([][]memtable.Record, cfg.Num_memtables)
-					for i := 0; i < cfg.Num_memtables; i++ {
+					tables := make([][]memtable.Record, cfg.MemtableNum)
+					for i := 0; i < cfg.MemtableNum; i++ {
 						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
 						tables = append(tables, *memtableInstances[i].Flush())
 						// ovde dodati izgradnju sstabele
@@ -237,7 +233,7 @@ func main() {
 				continue
 			}
 			// Pretrazi Memtable po zadatom kljucu
-			for i := 0; i < cfg.Num_memtables; i++ {
+			for i := 0; i < cfg.MemtableNum; i++ {
 				value, found := memtableInstances[i].Get(parts[1])
 				if found {
 					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
@@ -272,7 +268,7 @@ func main() {
 			var value []byte
 			var found bool
 			delIndex := 0
-			for delIndex < cfg.Num_memtables {
+			for delIndex < cfg.MemtableNum {
 				value, found = memtableInstances[delIndex].Get(parts[1])
 				if found {
 					break
