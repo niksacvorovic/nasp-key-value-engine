@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"os"
 
+	"projekat/structs/sstable"
 	"projekat/structs/wal"
 )
 
@@ -127,4 +128,19 @@ func readRecord(file *os.File) (*wal.Record, error) {
 
 	record.CRC = crc
 	return &record, nil
+}
+
+// ConvertMemToSST konvertuje podatke iz Memtable u SSTable format
+func ConvertMemToSST(records []Record) []sstable.Record {
+	sstRecords := make([]sstable.Record, 0, len(records))
+	for _, r := range records {
+		sstRecords = append(sstRecords, sstable.Record{
+			Key:       []byte(r.Key),
+			Value:     r.Value,
+			KeySize:   uint64(len(r.Key)),
+			ValueSize: uint64(len(r.Value)),
+			Tombstone: false, // pretpostavljamo da nije obrisan
+		})
+	}
+	return sstRecords
 }
