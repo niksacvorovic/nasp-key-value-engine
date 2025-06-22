@@ -71,9 +71,9 @@ func calculateCRC(record Record) uint32 {
 
 // Kreiranje SSTable sa Bloom filterom, Merkle stablom i summary zapisima
 func CreateSSTable(records []Record, sst *SSTable) error {
-	sort.Slice(records, func(i, j int) bool {
-		return bytes.Compare(records[i].Key, records[j].Key) < 0
-	})
+	// sort.Slice(records, func(i, j int) bool {
+	// 	return bytes.Compare(records[i].Key, records[j].Key) < 0
+	// })
 
 	dataFile, err := os.Create(sst.DataFilePath)
 	if err != nil {
