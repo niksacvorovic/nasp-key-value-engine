@@ -291,6 +291,7 @@ func main() {
 			fmt.Println(" - EXIT                  - Izlazi iz aplikacije.")
 
 		case "EXIT":
+			walInstance.WriteOnExit()
 			fmt.Println("Dovidjenja!")
 			return
 

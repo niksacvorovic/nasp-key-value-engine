@@ -1,10 +1,11 @@
 package wal
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
-	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"projekat/structs/blockmanager"
@@ -16,6 +17,7 @@ type Record struct {
 	CRC       uint32   // CRC
 	Timestamp [16]byte // Vreme
 	Tombstone bool     // Grob
+	Type      byte     // Tip zapisa (ceo, prvi, srednji, poslednji)
 	KeySize   uint64   // Velicina kljuca
 	ValueSize uint64   // Velicina vrednsoti
 	Key       []byte   // Kljuc
@@ -24,32 +26,64 @@ type Record struct {
 
 // Struktura Write-Ahead Log-a (WAL)
 type WAL struct {
-	bm                      *blockmanager.BlockManager // Blockmanager
-	Dir                     string                     // Direktorijum za segmente
-	segments                map[int]string             // Mapa svih segmenata WAL
-	buffer                  []byte                     // Buffer
-	blockSize               int                        // Veličina jednog bloka
-	walMaxRecordsPerSegment int                        // Maksimalno zapisa po segmentu
-	walBlocksPerSegment     int                        // Broj blokova po segmentu
-	recordCount             int                        // Brojac zapisa u segmentu
-	segNum                  int                        // Trenutni broj segmenta
+	bm                  *blockmanager.BlockManager // Blockmanager
+	Dir                 string                     // Direktorijum za segmente
+	segments            map[uint32]string          // Mapa svih segmenata WAL
+	sizes               map[uint32]int             // Mapa veličina segmenata u blokovima
+	buffer              []byte                     // Buffer
+	blockSize           int                        // Veličina jednog bloka
+	walBlocksPerSegment int                        // Broj blokova po segmentu
+	segNum              uint32                     // Indeks poslednjeg segmenta
+	firstSeg            uint32                     // Redni broj prvog segmenta
 }
 
 func (r *Record) CalculateSize() int {
-	return 4 + 16 + 1 + 8 + 8 + int(r.KeySize) + int(r.ValueSize)
+	return 4 + 16 + 1 + 1 + 8 + 8 + int(r.KeySize) + int(r.ValueSize)
 }
 
 func (r *Record) RecordToBytes() []byte {
 	bytes := make([]byte, 0)
 	bytes = append(bytes, r.Timestamp[:]...)
-	binary.Append(bytes, binary.LittleEndian, r.Tombstone)
-	binary.Append(bytes, binary.LittleEndian, r.KeySize)
-	binary.Append(bytes, binary.LittleEndian, r.ValueSize)
+	if r.Tombstone {
+		bytes = append(bytes, byte(0))
+	} else {
+		bytes = append(bytes, byte(1))
+	}
+	bytes = append(bytes, r.Type)
+	bytes, _ = binary.Append(bytes, binary.LittleEndian, r.KeySize)
+	bytes, _ = binary.Append(bytes, binary.LittleEndian, r.ValueSize)
 	bytes = append(bytes, r.Key...)
 	bytes = append(bytes, r.Value...)
 	r.CRC = crc32.ChecksumIEEE(bytes)
 	bytes = append(binary.LittleEndian.AppendUint32([]byte{}, r.CRC), bytes...)
 	return bytes
+}
+
+func (r *Record) BytesToRecord(byteptr *[]byte, seek int) (int, bool) {
+	if bytes.Equal((*byteptr)[seek:seek+4], []byte{0, 0, 0, 0}) {
+		return seek, true
+	}
+	r.CRC = binary.LittleEndian.Uint32((*byteptr)[seek : seek+4])
+	seek += 4
+	copy(r.Timestamp[:], (*byteptr)[seek:seek+16])
+	seek += 16
+	if (*byteptr)[seek] == 0 {
+		r.Tombstone = true
+	} else {
+		r.Tombstone = false
+	}
+	seek += 1
+	r.Type = (*byteptr)[seek]
+	seek += 1
+	r.KeySize = binary.LittleEndian.Uint64((*byteptr)[seek : seek+8])
+	seek += 8
+	r.ValueSize = binary.LittleEndian.Uint64((*byteptr)[seek : seek+8])
+	seek += 8
+	r.Key = (*byteptr)[seek : seek+int(r.KeySize)]
+	seek += int(r.KeySize)
+	r.Value = (*byteptr)[seek : seek+int(r.ValueSize)]
+	seek += int(r.ValueSize)
+	return seek, false
 }
 
 // NewWAL kreira novu instancu WAL-a
@@ -61,41 +95,60 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 
 	newBM := blockmanager.NewBlockManager(blockSize, blockCacheSize)
 
-	// Pronadji najveci broj segmenta
-	orderedFiles := make(map[int]string)
-	segNum := 0
-	var order int32
+	// Pronadji najveci i najmanji broj segmenta
+	orderedFiles := make(map[uint32]string)
+	sizes := make(map[uint32]int)
+	segNum := uint32(0)
+	var last uint32
+	var first uint32
+	first = math.MaxUint32
+	last = uint32(0)
 	contents, _ := os.ReadDir(dirPath)
 	for _, f := range contents {
 		if !f.IsDir() {
 			block, err := newBM.ReadBlock(filepath.Join(dirPath, f.Name()), 0)
 			if err == nil {
-				segNum = int(binary.LittleEndian.Uint32(block[3:7]))
+				segNum = binary.LittleEndian.Uint32(block[3:7])
 				if string(block[:3]) == "WAL" {
-					orderedFiles[int(order)] = f.Name()
-					if int(order) > segNum {
-						segNum = int(order)
+					orderedFiles[segNum] = f.Name()
+					sizes[segNum] = walBlocksPerSegment
+					if segNum > last {
+						last = segNum
+					}
+					if segNum < first {
+						first = segNum
 					}
 				}
 			}
 		}
 	}
-	// Određivanje indeksa poslednjeg bloka u poslednjem segmentu fajla
+	if len(orderedFiles) == 0 {
+		orderedFiles[segNum] = fmt.Sprintf("wal_%04d.log", segNum)
+	}
+	buf := make([]byte, 0, blockSize)
+	// Čitanje broja blokova poslednjeg fajla
 	file, _ := os.OpenFile(filepath.Join(dirPath, orderedFiles[segNum]), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	fileinfo, _ := file.Stat()
-	newBM.Block_idx = int(fileinfo.Size())/blockSize - 1
-
+	if fileinfo.Size() == 0 {
+		buf = append(buf, []byte("WAL")...)
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(segNum))
+		newBM.WriteBlock(filepath.Join(dirPath, orderedFiles[segNum]), buf)
+		sizes[segNum] = 1
+		newBM.Block_idx = 0
+	} else {
+		sizes[segNum] = int(fileinfo.Size()) / blockSize
+	}
 	// Vrati instancu WAL-a
 	return &WAL{
-		bm:                      newBM,
-		Dir:                     dirPath,
-		segments:                orderedFiles,
-		buffer:                  make([]byte, 0, blockSize),
-		walMaxRecordsPerSegment: walMaxRecordsPerSegment,
-		walBlocksPerSegment:     walBlocksPerSegment,
-		recordCount:             0,
-		blockSize:               blockSize,
-		segNum:                  segNum + 1, // Novi broj segmenta
+		bm:                  newBM,
+		Dir:                 dirPath,
+		segments:            orderedFiles,
+		sizes:               sizes,
+		buffer:              buf,
+		walBlocksPerSegment: walBlocksPerSegment,
+		blockSize:           blockSize,
+		segNum:              last,
+		firstSeg:            first,
 	}, nil
 }
 
@@ -112,42 +165,112 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
 	// Postavi time-stamp
 	ts := fmt.Sprintf("%-16d", time.Now().Unix())
 	copy(record.Timestamp[:], ts[:16])
-
-	blockSpace := w.blockSize - len(w.buffer)
-	recordBytes := record.RecordToBytes()
-	if blockSpace >= len(recordBytes) && w.recordCount > w.walMaxRecordsPerSegment {
-		w.buffer = append(w.buffer, recordBytes...)
-		w.recordCount++
-	} else if blockSpace >= len(recordBytes) && w.recordCount == w.walMaxRecordsPerSegment {
-		w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
-		w.rotateSegment()
-	} else if blockSpace < len(recordBytes) {
-		remaining := 0
-		for remaining < len(recordBytes) {
-			if blockSpace > len(recordBytes)-remaining {
-				w.buffer = append(w.buffer, recordBytes[remaining:]...)
-			} else {
-				w.buffer = append(w.buffer, recordBytes[remaining:remaining+blockSpace]...)
-			}
-			remaining += blockSpace
-			if len(w.buffer) == w.blockSize {
+	// Radimo u petlji - tražimo mesto
+	for {
+		blockSpace := w.blockSize - len(w.buffer)
+		// Ako se uklapa, odmah upisujemo
+		if blockSpace >= record.CalculateSize() {
+			record.Type = 0
+			w.buffer = append(w.buffer, record.RecordToBytes()...)
+			return nil
+		} else {
+			// Ako ne može da stane header - upisujemo padding na ostatak bloka
+			if blockSpace < 38 {
+				w.bm.Block_idx = w.sizes[w.segNum] - 1
 				w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
-				w.bm.Block_idx++
-				blockSpace = w.blockSize
+				w.buffer = make([]byte, 0)
+				w.sizes[w.segNum]++
 				if w.bm.Block_idx == w.walBlocksPerSegment {
 					w.rotateSegment()
-					blockSpace = w.blockSize - 7 // header je sedam bajtova
 				}
+			} else {
+				// Ako može - vršimo segmentaciju zapisa
+				segments := w.SegmentRecord(record, blockSpace)
+				for i := range segments {
+					w.buffer = append(w.buffer, segments[i]...)
+					if len(w.buffer) == w.blockSize {
+						w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
+						w.sizes[w.segNum]++
+						w.buffer = make([]byte, 0)
+						if w.bm.Block_idx == w.walBlocksPerSegment {
+							w.rotateSegment()
+						}
+					}
+				}
+				return nil
 			}
 		}
 	}
+}
 
-	// Ako smo stigli do maksimalnog broja zapisa ili blokova prelazimo na sledeci segment
-	w.recordCount++
-	if w.recordCount >= w.walMaxRecordsPerSegment || w.bm.Block_idx >= w.walBlocksPerSegment {
-		return w.rotateSegment()
+// Funkcija koja računa koliko je segmenata potrebno za jedan duži zapis i kreira ih
+func (w *WAL) SegmentRecord(rec Record, blockSpace int) [][]byte {
+	segBytes := make([][]byte, 0)
+	seglens := make([]int, 0)
+	keyvalLength := int(rec.KeySize + rec.ValueSize)
+	keyvalLength -= blockSpace - 38
+	seglens = append(seglens, blockSpace-38)
+	i := 0
+	for keyvalLength > 0 {
+		// Vodimo računa koji blok je na početku novog fajla i sadrži header
+		if (i+w.bm.Block_idx+1)%w.walBlocksPerSegment == 0 {
+			if keyvalLength < w.blockSize-7-38 {
+				seglens = append(seglens, keyvalLength)
+				keyvalLength = 0
+			} else {
+				seglens = append(seglens, w.blockSize-7-38)
+				keyvalLength = keyvalLength - w.blockSize + 7 + 38
+			}
+		} else {
+			if keyvalLength < w.blockSize-38 {
+				seglens = append(seglens, keyvalLength)
+				keyvalLength = 0
+			} else {
+				seglens = append(seglens, w.blockSize-38)
+				keyvalLength = keyvalLength - w.blockSize + 38
+			}
+		}
+		i++
 	}
-	return nil
+	keyIndex := 0
+	valueIndex := 0
+	for i := 0; i < len(seglens); i++ {
+		newRec := Record{
+			Tombstone: rec.Tombstone,
+		}
+		if seglens[i] < int(rec.KeySize)-keyIndex {
+			newRec.KeySize = uint64(seglens[i])
+			newRec.Key = rec.Key[keyIndex : keyIndex+seglens[i]]
+			keyIndex += seglens[i]
+			seglens[i] = 0
+		} else {
+			newRec.KeySize = rec.KeySize - uint64(keyIndex)
+			newRec.Key = rec.Key[keyIndex:rec.KeySize]
+			keyIndex = int(rec.KeySize)
+			seglens[i] -= int(newRec.KeySize)
+		}
+		if seglens[i] < int(rec.ValueSize)-valueIndex {
+			newRec.ValueSize = uint64(seglens[i])
+			newRec.Value = rec.Value[valueIndex : valueIndex+seglens[i]]
+			valueIndex += seglens[i]
+			seglens[i] = 0
+		} else {
+			newRec.ValueSize = rec.ValueSize - uint64(valueIndex)
+			newRec.Value = rec.Value[valueIndex:rec.ValueSize]
+			valueIndex = int(rec.ValueSize)
+			seglens[i] -= int(newRec.ValueSize)
+		}
+		if i == 0 {
+			newRec.Type = 1
+		} else if i == len(seglens)-1 {
+			newRec.Type = 3
+		} else {
+			newRec.Type = 2
+		}
+		copy(newRec.Timestamp[:], rec.Timestamp[:])
+		segBytes = append(segBytes, newRec.RecordToBytes())
+	}
+	return segBytes
 }
 
 // rotateSegment kreira novi segmentni fajl
@@ -155,104 +278,103 @@ func (w *WAL) rotateSegment() error {
 	// Kreiraj novi segment
 	w.segNum++
 	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.segNum))
-	newFile, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	_, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
 
 	// Dodaj novi segment u spisak segmenata
-	w.segments[w.segNum] = newFile.Name()
+	w.segments[w.segNum] = fmt.Sprintf("wal_%04d.log", w.segNum)
+	w.sizes[w.segNum] = 1
 
 	// Resetuj sve vrijednosti
-	w.recordCount = 0
 	w.buffer = make([]byte, 0, w.blockSize)
 	w.buffer = append(w.buffer, []byte("WAL")...)
-	binary.LittleEndian.AppendUint32(w.buffer, uint32(w.segNum))
+	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.segNum))
 	w.bm.Block_idx = 0
 	return nil
 }
 
-// ReadRecords čita sve segmente iz WAL
+// ReadRecords čita sve segmente iz WAL i stavlja u buffer nepopunjeni blok
 func (w *WAL) ReadRecords() ([]Record, error) {
 	records := make([]Record, 0)
-	cutoff := make([]byte, 0)
-	newrecs := make([]Record, 0)
-	for i := 0; i < w.segNum; i++ {
-		for j := 0; j < w.walBlocksPerSegment; i++ {
-			block, err := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[i]), j)
-			if err == io.EOF {
-				return records, nil
+	currentSeg := w.firstSeg
+	for currentSeg <= w.segNum {
+		currentBlock := 0
+		for currentBlock < w.sizes[uint32(currentSeg)] {
+			block, _ := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[uint32(currentSeg)]), currentBlock)
+			seek := 0
+			if currentBlock == 0 {
+				seek += 7
 			}
-			if i == 0 {
-				chunk := append(cutoff, block[7:]...)
-				newrecs, cutoff, _ = parseRecord(chunk)
-			} else {
-				chunk := append(cutoff, block...)
-				newrecs, cutoff, _ = parseRecord(chunk)
+			for len(block)-seek > 38 {
+				newRecord := Record{}
+				newseek, end := newRecord.BytesToRecord(&block, seek)
+				// Ukoliko je blok nepopunjen, stavlja ga u bafer
+				if end {
+					w.buffer = block[:newseek]
+					return records, nil
+				}
+				crc := crc32.ChecksumIEEE(block[seek+4 : newseek])
+				if crc == newRecord.CRC {
+					records = append(records, newRecord)
+				} else if newRecord.Type != 0 {
+					newRecord.Type = 255
+					records = append(records, newRecord)
+				}
+				seek = newseek
 			}
-			records = append(records, newrecs...)
+			if currentBlock == w.sizes[uint32(currentSeg)]-1 {
+				w.buffer = block[:seek]
+			}
+			currentBlock += 1
 		}
+		currentSeg += 1
 	}
 	return records, nil
 }
 
 // paraseRecord parsiraj jedan zapis tipa []byta u tip Record
-func parseRecord(block []byte) ([]Record, []byte, error) {
-	var rec Record
-	var recs []Record
-	seek := 0
-	for {
-		// Procitaj zaglavlje zapisa
-		recordBytes := make([]byte, 0)
-		if len(block)-seek < 21 {
-			return recs, block[seek:], nil
-		}
-		recordBytes = append(recordBytes, block[seek:seek+21]...)
-		seek += 21
-		// Procitaj KeySize
-		if len(block)-seek < 8 {
-			return recs, block[seek-21:], nil
-		}
-		rec.KeySize = binary.LittleEndian.Uint64(block[seek : seek+8])
-		recordBytes = append(recordBytes, block[seek:seek+8]...)
-		seek += 8
-		// Procitaj ValueSize
-		if len(block)-seek < 8 {
-			return recs, block[seek-29:], nil
-		}
-		rec.ValueSize = binary.LittleEndian.Uint64(block[seek : seek+8])
-		recordBytes = append(recordBytes, block[seek:seek+8]...)
-		seek += 8
-		// Procitaj Key i Value
-		if len(block)-seek < int(rec.KeySize)+int(rec.ValueSize) {
-			return recs, block[seek-37:], nil
-		}
-		recordBytes = append(recordBytes, block[seek:seek+int(rec.KeySize)+int(rec.ValueSize)]...)
-		seek += int(rec.KeySize) + int(rec.ValueSize)
-		crc := crc32.ChecksumIEEE(recordBytes[4:])
-		if crc == binary.LittleEndian.Uint32(recordBytes[:4]) {
-			rec.CRC = binary.LittleEndian.Uint32(recordBytes[:4])
-			copy(rec.Timestamp[:], recordBytes[4:20])
-			if recordBytes[20] == 0 {
-				rec.Tombstone = true
-			} else {
-				rec.Tombstone = false
-			}
-			rec.Key = recordBytes[37 : 37+rec.KeySize]
-			rec.Value = recordBytes[37+rec.KeySize : 37+rec.KeySize+rec.ValueSize]
-			recs = append(recs, rec)
-		}
-	}
-}
+// func parseRecords(block []byte, remainsLen int) ([]Record, []byte, int) {
+// var rec Record
+// var recs []Record
+// seek := 0
+// for {
+// Procitaj Key i Value
+// if len(block)-seek < int(rec.KeySize)+int(rec.ValueSize) {
+// return recs, block[seek-37:], seek - remainsLen
+// }
+// recordBytes = append(recordBytes, block[seek:seek+int(rec.KeySize)+int(rec.ValueSize)]...)
+// seek += int(rec.KeySize) + int(rec.ValueSize)
+// crc := crc32.ChecksumIEEE(recordBytes[4:])
+// if crc == binary.LittleEndian.Uint32(recordBytes[:4]) {
+// rec.CRC = binary.LittleEndian.Uint32(recordBytes[:4])
+// copy(rec.Timestamp[:], recordBytes[4:20])
+// if recordBytes[20] == 0 {
+// rec.Tombstone = true
+// } else {
+// rec.Tombstone = false
+// }
+// rec.Key = recordBytes[37 : 37+rec.KeySize]
+// rec.Value = recordBytes[37+rec.KeySize : 37+rec.KeySize+rec.ValueSize]
+// recs = append(recs, rec)
+// }
+// }
+// }
 
 // MarkSegmentAsPersisted obiljezava segment perzistiranim u SSTable-u
 func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
 	// Izbrisi iz starih segmenata ako postoji
-	for i := 0; i < w.segNum; i++ {
+	for i := uint32(0); i < w.segNum; i++ {
 		if filepath.Join(w.Dir, w.segments[i]) == segmentPath {
 			delete(w.segments, i)
 			return os.Remove(segmentPath)
 		}
 	}
 	return nil
+}
+
+func (w *WAL) WriteOnExit() {
+	w.bm.Block_idx = w.sizes[w.segNum] - 1
+	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
 }
