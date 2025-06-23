@@ -298,32 +298,90 @@ func (w *WAL) rotateSegment() error {
 // ReadRecords čita sve segmente iz WAL i stavlja u buffer nepopunjeni blok
 func (w *WAL) ReadRecords() ([]Record, error) {
 	records := make([]Record, 0)
+	var partialRecord *Record = nil
+
+	// Prođi kroz svaki segment
 	currentSeg := w.firstSeg
 	for currentSeg <= w.segNum {
+		// Prođi kroz svaki blok
 		currentBlock := 0
 		for currentBlock < w.sizes[uint32(currentSeg)] {
 			block, _ := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[uint32(currentSeg)]), currentBlock)
 			seek := 0
 			if currentBlock == 0 {
-				seek += 7
+				seek += 7 // Preskoči "WAL" header
 			}
+
+			// Ako je preostalo dovoljno prostora za header, čitaj zapis (u suprotnom znamo da je ostatak bloka prazan)
 			for len(block)-seek > 38 {
 				newRecord := Record{}
 				newseek, end := newRecord.BytesToRecord(&block, seek)
-				// Ukoliko je blok nepopunjen, stavlja ga u bafer
 				if end {
 					w.buffer = block[:newseek]
 					return records, nil
 				}
+
 				crc := crc32.ChecksumIEEE(block[seek+4 : newseek])
-				if crc == newRecord.CRC {
-					records = append(records, newRecord)
-				} else if newRecord.Type != 0 {
-					newRecord.Type = 255
-					records = append(records, newRecord)
+				if crc != newRecord.CRC {
+					if newRecord.Type != 0 {
+						partialRecord = nil
+					}
+					seek = newseek
+					continue
 				}
+
+				if newRecord.Type == 0 { // FULL
+					// Dodaj zapis u records
+					records = append(records, newRecord)
+
+				} else if newRecord.Type == 1 { // FIRST
+					// Započi rekonstrukciju partialRecord-a
+					partialRecord = &Record{
+						Timestamp: newRecord.Timestamp,
+						Tombstone: newRecord.Tombstone,
+						Key:       append([]byte{}, newRecord.Key...),
+						Value:     append([]byte{}, newRecord.Value...),
+					}
+
+				} else if newRecord.Type == 2 { // MIDDLE
+					// Dodaj fragmente na već postojeci ključ i/ili vrijednost
+					if partialRecord != nil {
+						partialRecord.Key = append(partialRecord.Key, newRecord.Key...)
+						partialRecord.Value = append(partialRecord.Value, newRecord.Value...)
+					} else {
+						partialRecord = nil
+					}
+
+				} else if newRecord.Type == 3 { // LAST
+					// Završi rekonstrukciju partialRecord-a
+					if partialRecord != nil {
+						partialRecord.Key = append(partialRecord.Key, newRecord.Key...)
+						partialRecord.Value = append(partialRecord.Value, newRecord.Value...)
+
+						finalRec := Record{
+							Timestamp: partialRecord.Timestamp,
+							Tombstone: partialRecord.Tombstone,
+							Type:      0,
+							KeySize:   uint64(len(partialRecord.Key)),
+							ValueSize: uint64(len(partialRecord.Value)),
+							Key:       partialRecord.Key,
+							Value:     partialRecord.Value,
+						}
+						finalRec.RecordToBytes()
+
+						// Dodaj rekonstruisani zapis u records
+						records = append(records, finalRec)
+						partialRecord = nil
+					}
+
+				} else {
+					// Nepoznat tip – ignoriši
+					partialRecord = nil
+				}
+
 				seek = newseek
 			}
+
 			if currentBlock == w.sizes[uint32(currentSeg)]-1 {
 				w.buffer = block[:seek]
 			}
@@ -331,36 +389,9 @@ func (w *WAL) ReadRecords() ([]Record, error) {
 		}
 		currentSeg += 1
 	}
+
 	return records, nil
 }
-
-// paraseRecord parsiraj jedan zapis tipa []byta u tip Record
-// func parseRecords(block []byte, remainsLen int) ([]Record, []byte, int) {
-// var rec Record
-// var recs []Record
-// seek := 0
-// for {
-// Procitaj Key i Value
-// if len(block)-seek < int(rec.KeySize)+int(rec.ValueSize) {
-// return recs, block[seek-37:], seek - remainsLen
-// }
-// recordBytes = append(recordBytes, block[seek:seek+int(rec.KeySize)+int(rec.ValueSize)]...)
-// seek += int(rec.KeySize) + int(rec.ValueSize)
-// crc := crc32.ChecksumIEEE(recordBytes[4:])
-// if crc == binary.LittleEndian.Uint32(recordBytes[:4]) {
-// rec.CRC = binary.LittleEndian.Uint32(recordBytes[:4])
-// copy(rec.Timestamp[:], recordBytes[4:20])
-// if recordBytes[20] == 0 {
-// rec.Tombstone = true
-// } else {
-// rec.Tombstone = false
-// }
-// rec.Key = recordBytes[37 : 37+rec.KeySize]
-// rec.Value = recordBytes[37+rec.KeySize : 37+rec.KeySize+rec.ValueSize]
-// recs = append(recs, rec)
-// }
-// }
-// }
 
 // MarkSegmentAsPersisted obiljezava segment perzistiranim u SSTable-u
 func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
