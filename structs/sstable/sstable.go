@@ -70,7 +70,7 @@ func calculateCRC(record Record) uint32 {
 }
 
 // Kreiranje SSTable sa Bloom filterom, Merkle stablom i summary zapisima
-func CreateSSTable(records []Record, sst *SSTable) error {
+func CreateSSTable(records []Record, sst *SSTable, step int) error {
 	// sort.Slice(records, func(i, j int) bool {
 	// 	return bytes.Compare(records[i].Key, records[j].Key) < 0
 	// })
@@ -103,7 +103,7 @@ func CreateSSTable(records []Record, sst *SSTable) error {
 
 	summaryEntries := []SummaryEntry{}
 	var currentOffset uint64 = 0
-	blockSize := 4
+	blockSize := step
 
 	for i, record := range records {
 		record.Timestamp = time.Now().UnixNano()
