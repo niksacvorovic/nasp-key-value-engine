@@ -2,7 +2,7 @@ package containers
 
 import (
 	"fmt"
-	"os"
+	"math"
 	"sort"
 
 	"projekat/structs/memtable"
@@ -10,21 +10,23 @@ import (
 
 // HashMapMemtable implementira MemtableInterface koristeci mapu
 type HashMapMemtable struct {
-	data    map[string][]byte
-	maxSize int
+	data      map[string]memtable.Record
+	watermark uint32
+	maxSize   int
 }
 
 // NewHashMapMemtable kreira novu instancu HashMapMemtable-a
 func NewHashMapMemtable(maxSize int) *HashMapMemtable {
 	return &HashMapMemtable{
-		data:    make(map[string][]byte),
-		maxSize: maxSize,
+		data:      make(map[string]memtable.Record),
+		watermark: math.MaxUint32,
+		maxSize:   maxSize,
 	}
 }
 
 // Add dodaje par kljuc-vrednost u HashMapMemtable
-func (m *HashMapMemtable) Add(key string, value []byte) error {
-	m.data[key] = value
+func (m *HashMapMemtable) Add(ts [16]byte, tombstone bool, key string, value []byte) error {
+	m.data[key] = memtable.Record{Timestamp: ts, Tombstone: tombstone, Key: key, Value: value}
 	return nil
 }
 
@@ -44,8 +46,8 @@ func (m *HashMapMemtable) Delete(key string) error {
 
 // Get dohvata vrednost prema kljucu iz HashMapMemtable-a
 func (m *HashMapMemtable) Get(key string) ([]byte, bool) {
-	value, exists := m.data[key]
-	return value, exists
+	record, exists := m.data[key]
+	return record.Value, exists
 }
 
 // PrintData ispisuje sve podatke u HashMapMemtable-u
@@ -57,9 +59,9 @@ func (m *HashMapMemtable) PrintData() {
 }
 
 // LoadFromWAL ucitava podatke iz WAL fajla u HashMapMemtable
-func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {
-	return memtable.LoadFromWALHelper(file, m, offset)
-}
+// func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {
+// return memtable.LoadFromWALHelper(file, m, offset)
+// }
 
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
 func (m *HashMapMemtable) Flush() *[]memtable.Record {
@@ -72,48 +74,17 @@ func (m *HashMapMemtable) Flush() *[]memtable.Record {
 	// Dodajemo vrednosti u niz
 	records := make([]memtable.Record, 0, len(m.data))
 	for i := range sortedKeys {
-		records = append(records, memtable.Record{Key: sortedKeys[i], Value: m.data[sortedKeys[i]]})
+		records = append(records, m.data[sortedKeys[i]])
 	}
 	// Resetujemo Memtable
-	m.data = make(map[string][]byte)
+	m.data = make(map[string]memtable.Record)
 	return &records
 }
 
-// NAPOMENA - OVU LOGIKU DOLE PREBACITI U SSTABLE
+func (m *HashMapMemtable) SetWatermark(index uint32) {
+	m.watermark = min(m.watermark, index)
+}
 
-// // Inicijalizacija Bloom filtera nad SSTable
-// bf := probabilistic.CreateBF(m.maxSize, 99)
-// // Serijalizacija podataka u SSTable format
-// blockData := make([]byte, 0, m.maxSize*10)
-// for _, key := range keys {
-// 	value := m.data[key]
-
-// 	// Dužina ključa i vrednosti
-// 	keyLen := len(key)
-// 	valueLen := len(value)
-
-// 	// Serijalizacija u binarni format: [keyLen][key][valueLen][value]
-// 	blockData = append(blockData, byte(keyLen))
-// 	blockData = append(blockData, []byte(key)...)
-// 	blockData = append(blockData, byte(valueLen))
-// 	blockData = append(blockData, value...)
-// }
-
-// // Dodavanje paddinga
-// padding := BlockSize - (len(blockData) % BlockSize)
-// if padding < BlockSize {
-// 	blockData = append(blockData, make([]byte, padding)...)
-// }
-
-// // Izgradnja Merkle stabla nad SSTable
-// mt := merkletree.NewMerkleTree()
-// mt.ConstructMerkleTree(blockData, m.blockManager.blockSize)
-
-// // Ovde treba dodati zapisivanje Bloom filtera i Merkle stabla u fajl
-// // Možda lakše da prvo to bude upisano u odvojene fajlove
-
-// // Pisanje podataka u SSTable fajl koristeći BlockManager
-// err := m.blockManager.WriteBlock(filename, blockData)
-// if err != nil {
-// 	return fmt.Errorf("greška pri pisanju u BlockManager: %v", err)
-// }
+func (m *HashMapMemtable) GetWatermark() uint32 {
+	return m.watermark
+}

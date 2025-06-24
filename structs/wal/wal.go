@@ -33,8 +33,8 @@ type WAL struct {
 	buffer              []byte                     // Buffer
 	blockSize           int                        // Veličina jednog bloka
 	walBlocksPerSegment int                        // Broj blokova po segmentu
-	segNum              uint32                     // Indeks poslednjeg segmenta
-	firstSeg            uint32                     // Redni broj prvog segmenta
+	SegNum              uint32                     // Indeks poslednjeg segmenta
+	FirstSeg            uint32                     // Redni broj prvog segmenta
 }
 
 func (r *Record) CalculateSize() int {
@@ -147,13 +147,13 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 		buffer:              buf,
 		walBlocksPerSegment: walBlocksPerSegment,
 		blockSize:           blockSize,
-		segNum:              last,
-		firstSeg:            first,
+		SegNum:              last,
+		FirstSeg:            first,
 	}, nil
 }
 
 // AppendRecord upisuje zapis u WAL
-func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
+func (w *WAL) AppendRecord(tombstone bool, key, value []byte) ([16]byte, error) {
 	record := Record{
 		Tombstone: tombstone,
 		KeySize:   uint64(len(key)),
@@ -163,8 +163,9 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
 	}
 
 	// Postavi time-stamp
-	ts := fmt.Sprintf("%-16d", time.Now().Unix())
-	copy(record.Timestamp[:], ts[:16])
+	ts := binary.LittleEndian.AppendUint64([]byte{}, uint64(time.Now().UnixNano()))
+	ts = append(ts, make([]byte, 8)...)
+	copy(record.Timestamp[:], ts[:])
 	// Radimo u petlji - tražimo mesto
 	for {
 		blockSpace := w.blockSize - len(w.buffer)
@@ -172,14 +173,14 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
 		if blockSpace >= record.CalculateSize() {
 			record.Type = 0
 			w.buffer = append(w.buffer, record.RecordToBytes()...)
-			return nil
+			return record.Timestamp, nil
 		} else {
 			// Ako ne može da stane header - upisujemo padding na ostatak bloka
 			if blockSpace < 38 {
-				w.bm.Block_idx = w.sizes[w.segNum] - 1
-				w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
+				w.bm.Block_idx = w.sizes[w.SegNum] - 1
+				w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
 				w.buffer = make([]byte, 0)
-				w.sizes[w.segNum]++
+				w.sizes[w.SegNum]++
 				if w.bm.Block_idx == w.walBlocksPerSegment {
 					w.rotateSegment()
 				}
@@ -189,15 +190,15 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) error {
 				for i := range segments {
 					w.buffer = append(w.buffer, segments[i]...)
 					if len(w.buffer) == w.blockSize {
-						w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
-						w.sizes[w.segNum]++
+						w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
+						w.sizes[w.SegNum]++
 						w.buffer = make([]byte, 0)
 						if w.bm.Block_idx == w.walBlocksPerSegment {
 							w.rotateSegment()
 						}
 					}
 				}
-				return nil
+				return record.Timestamp, nil
 			}
 		}
 	}
@@ -276,34 +277,35 @@ func (w *WAL) SegmentRecord(rec Record, blockSpace int) [][]byte {
 // rotateSegment kreira novi segmentni fajl
 func (w *WAL) rotateSegment() error {
 	// Kreiraj novi segment
-	w.segNum++
-	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.segNum))
+	w.SegNum++
+	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.SegNum))
 	_, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
 
 	// Dodaj novi segment u spisak segmenata
-	w.segments[w.segNum] = fmt.Sprintf("wal_%04d.log", w.segNum)
-	w.sizes[w.segNum] = 1
+	w.segments[w.SegNum] = fmt.Sprintf("wal_%04d.log", w.SegNum)
+	w.sizes[w.SegNum] = 1
 
 	// Resetuj sve vrijednosti
 	w.buffer = make([]byte, 0, w.blockSize)
 	w.buffer = append(w.buffer, []byte("WAL")...)
-	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.segNum))
+	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.SegNum))
 	w.bm.Block_idx = 0
 	return nil
 }
 
 // ReadRecords čita sve segmente iz WAL i stavlja u buffer nepopunjeni blok
-func (w *WAL) ReadRecords() ([]Record, error) {
-	records := make([]Record, 0)
+func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
+	recordMap := make(map[uint32][]Record, 0)
 	var partialRecord *Record = nil
 
 	// Prođi kroz svaki segment
-	currentSeg := w.firstSeg
-	for currentSeg <= w.segNum {
+	currentSeg := w.FirstSeg
+	for currentSeg <= w.SegNum {
 		// Prođi kroz svaki blok
+		records := make([]Record, 0)
 		currentBlock := 0
 		for currentBlock < w.sizes[uint32(currentSeg)] {
 			block, _ := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[uint32(currentSeg)]), currentBlock)
@@ -318,7 +320,8 @@ func (w *WAL) ReadRecords() ([]Record, error) {
 				newseek, end := newRecord.BytesToRecord(&block, seek)
 				if end {
 					w.buffer = block[:newseek]
-					return records, nil
+					recordMap[w.SegNum] = records
+					return recordMap, nil
 				}
 
 				crc := crc32.ChecksumIEEE(block[seek+4 : newseek])
@@ -387,25 +390,30 @@ func (w *WAL) ReadRecords() ([]Record, error) {
 			}
 			currentBlock += 1
 		}
+		recordMap[w.SegNum] = records
 		currentSeg += 1
 	}
 
-	return records, nil
+	return recordMap, nil
 }
 
 // MarkSegmentAsPersisted obiljezava segment perzistiranim u SSTable-u
-func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
-	// Izbrisi iz starih segmenata ako postoji
-	for i := uint32(0); i < w.segNum; i++ {
-		if filepath.Join(w.Dir, w.segments[i]) == segmentPath {
-			delete(w.segments, i)
-			return os.Remove(segmentPath)
-		}
-	}
-	return nil
-}
+// func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
+// Izbrisi iz starih segmenata ako postoji
+// for i := uint32(0); i < w.SegNum; i++ {
+// if filepath.Join(w.Dir, w.segments[i]) == segmentPath {
+// delete(w.segments, i)
+// return os.Remove(segmentPath)
+// }
+// }
+// return nil
+// }
 
 func (w *WAL) WriteOnExit() {
-	w.bm.Block_idx = w.sizes[w.segNum] - 1
-	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.segNum]), w.buffer)
+	w.bm.Block_idx = w.sizes[w.SegNum] - 1
+	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
+}
+
+func (w *WAL) GetSegmentFilename(index uint32) string {
+	return w.segments[index]
 }

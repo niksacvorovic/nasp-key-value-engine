@@ -15,6 +15,7 @@ import (
 	"projekat/structs/containers"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
+	"projekat/structs/sstable"
 	"projekat/structs/wal"
 )
 
@@ -68,32 +69,28 @@ func main() {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
 
-	records, err := walInstance.ReadRecords()
+	// Citanje WAL fajlova
+	recordMap, err := walInstance.ReadRecords()
 	if err != nil {
 		fmt.Println("Greška pri čitanju:", err)
 	}
 
-	for idx := 0; idx < len(records); idx++ {
-		// Dodavanje u Memtable
-		memtableInstances[mtIndex].Add(string(records[idx].Key), records[idx].Value)
-
-		// Provera da li je trenutni Memtable pun
-		if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
-			// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
-			mtIndex++
-			continue
-		} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
-			// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
-			tables := make([][]memtable.Record, cfg.Num_memtables)
-			for i := 0; i < cfg.Num_memtables; i++ {
-				// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
-				tables = append(tables, *memtableInstances[i].Flush())
-				// ovde dodati izgradnju sstabele
+	// Dodavanje WAL zapisa u Memtabele
+	for walIndex := walInstance.FirstSeg; walIndex <= walInstance.SegNum; walIndex++ {
+		records := recordMap[walIndex]
+		for idx := range records {
+			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone,
+				string(records[idx].Key), records[idx].Value)
+			// Postavljanje watermarka za svaki Memtable
+			memtableInstances[mtIndex].SetWatermark(walIndex)
+			// Provera da li je trenutni Memtable pun
+			if memtableInstances[mtIndex].IsFull() {
+				// Ako je trenutni Memtable pun, prelazi se na sledeci Memtable
+				mtIndex = (mtIndex + 1) % cfg.Num_memtables
+				continue
 			}
 		}
-
 	}
-
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// Interfejs petlja
 	// -------------------------------------------------------------------------------------------------------------------------------
@@ -133,7 +130,7 @@ func main() {
 				newbucket := make([]byte, 0)
 				newbucket = binary.BigEndian.AppendUint64(newbucket, newtimestamp)
 				newbucket = append(newbucket, newtokens)
-				memtableInstances[0].Add("_TOKEN_BUCKET", newbucket)
+				memtableInstances[0].Add([16]byte{}, false, "_TOKEN_BUCKET", newbucket)
 				bucket = newbucket
 			}
 			timestamp := binary.BigEndian.Uint64(bucket[0:8])
@@ -151,7 +148,7 @@ func main() {
 				bucket = binary.BigEndian.AppendUint64(bucket, timestamp)
 				bucket = append(bucket, tokens)
 			}
-			memtableInstances[tokenIndex].Add("_TOKEN_BUCKET", bucket)
+			memtableInstances[tokenIndex].Add([16]byte{}, false, "_TOKEN_BUCKET", bucket)
 		}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -179,31 +176,45 @@ func main() {
 			}
 
 			// Dodavanje zapisa u Write-Ahead Log (WAL)
-			err = walInstance.AppendRecord(tombstone, key, value)
+			ts, err := walInstance.AppendRecord(tombstone, key, value)
 			if err != nil {
 				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
 				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
 			} else {
-				// Ako je upis u WAL uspesan, dodaje se u Memtable
-				memtableInstances[mtIndex].Add(parts[1], value)
-				fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
-
-				// Provera da li je trenutni Memtable pun
-				if memtableInstances[mtIndex].IsFull() && mtIndex != cfg.Num_memtables-1 {
-					// Ako je trenutni Memtable pun i nije poslednji, prelazi se na sledeci Memtable
+				memtableInstances[mtIndex].Add(ts, tombstone, parts[1], value)
+				memtableInstances[mtIndex].SetWatermark(walInstance.SegNum)
+				// Proveravamo da li je trenutni memtable popunjen
+				if memtableInstances[mtIndex].IsFull() {
 					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
-					mtIndex++
-					continue
-				} else if memtableInstances[mtIndex].IsFull() && mtIndex == cfg.Num_memtables-1 {
-					// Ako su svi Memtable-ovi puni, pokrece se serijalizacija u SSTable
-					fmt.Println("Popunjeni svi Memtable-ovi, serijalizacija u SSTable...")
-					tables := make([][]memtable.Record, cfg.Num_memtables)
-					for i := 0; i < cfg.Num_memtables; i++ {
-						// Flushovanje i serijalizacija svakog Memtable-a u SSTable fajl
-						tables = append(tables, *memtableInstances[i].Flush())
-						// ovde dodati izgradnju sstabele
+					mtIndex = (mtIndex + 1) % cfg.Num_memtables
+					// Ako je i sledeći memtable pun - svi su puni
+					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
+					if memtableInstances[mtIndex].IsFull() {
+						// Low watermark provera za brisanje WALa
+						lowWatermark := memtableInstances[mtIndex].GetWatermark()
+						delete := true
+						for i := 1; i < cfg.Num_memtables; i++ {
+							check := (i + mtIndex) % cfg.Num_memtables
+							if lowWatermark >= memtableInstances[check].GetWatermark() {
+								delete = false
+								break
+							}
+						}
+						// Ako svi ostale memtabele imaju veći watermark
+						// odbacujemo segment WAL sa tim rednim brojem
+						if delete {
+							delSeg := walInstance.GetSegmentFilename(lowWatermark)
+							os.Remove(filepath.Join(walDir, delSeg))
+
+						}
+						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
+						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
+						newSSTable := sstable.SSTable{}
+						sstable.CreateSSTable(sstrecords, &newSSTable, cfg.BlockSize)
 					}
 				}
+				// Ako je upis u WAL uspesan, dodaje se u Memtable
+				fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -231,7 +242,7 @@ func main() {
 			value, found := lru.CheckCache(parts[1])
 			if found {
 				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
-				break
+				continue
 			}
 		// --------------------------------------------------------------------------------------------------------------------------
 		// DELETE komanda
@@ -264,7 +275,7 @@ func main() {
 
 			// Izbrisi iz WAL-a i Memtable-a
 			if found {
-				err = walInstance.AppendRecord(tombstone, key, value)
+				_, err = walInstance.AppendRecord(tombstone, key, value)
 				if err != nil {
 					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
 				} else {

@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"time"
 
 	"projekat/structs/merkletree"
 	"projekat/structs/probabilistic"
@@ -18,7 +17,7 @@ import (
 // Struktura jednog data bloka
 type Record struct {
 	CRC       uint32
-	Timestamp int64
+	Timestamp [16]byte
 	Tombstone bool
 	KeySize   uint64
 	ValueSize uint64
@@ -106,11 +105,10 @@ func CreateSSTable(records []Record, sst *SSTable, step int) error {
 	blockSize := step
 
 	for i, record := range records {
-		record.Timestamp = time.Now().UnixNano()
 		record.CRC = calculateCRC(record)
 
 		binary.Write(dataFile, binary.LittleEndian, record.CRC)
-		binary.Write(dataFile, binary.LittleEndian, record.Timestamp)
+		dataFile.Write(record.Timestamp[:])
 		binary.Write(dataFile, binary.LittleEndian, record.Tombstone)
 		binary.Write(dataFile, binary.LittleEndian, record.KeySize)
 		binary.Write(dataFile, binary.LittleEndian, record.ValueSize)
@@ -201,13 +199,12 @@ func WriteDataFile(records []Record, filePath string) error {
 	defer file.Close()
 
 	for _, record := range records {
-		record.Timestamp = time.Now().UnixNano()
 		record.CRC = calculateCRC(record)
 
 		if err := binary.Write(file, binary.LittleEndian, record.CRC); err != nil {
 			return err
 		}
-		if err := binary.Write(file, binary.LittleEndian, record.Timestamp); err != nil {
+		if _, err := file.Write(record.Timestamp[:]); err != nil {
 			return err
 		}
 		if err := binary.Write(file, binary.LittleEndian, record.Tombstone); err != nil {

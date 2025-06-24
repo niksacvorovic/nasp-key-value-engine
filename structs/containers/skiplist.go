@@ -2,8 +2,8 @@ package containers
 
 import (
 	"errors"
+	"math"
 	"math/rand"
-	"os"
 
 	"projekat/structs/memtable"
 )
@@ -20,9 +20,10 @@ type SkipList struct {
 }
 
 type SkipListMemtable struct {
-	data    *SkipList
-	size    int
-	maxSize int
+	data      *SkipList
+	watermark uint32
+	size      int
+	maxSize   int
 }
 
 func (s *SkipList) roll() int {
@@ -86,7 +87,7 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 
 }
 
-func (sl *SkipList) WriteElement(str string, value []byte) bool {
+func (sl *SkipList) WriteElement(ts [16]byte, tombstone bool, str string, value []byte) bool {
 	current := &sl.levels[sl.maxHeight-1]
 	stack := make([]*Node, 0)
 	var newNode Node
@@ -115,7 +116,7 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 		}
 	}
 	newNode = Node{
-		Record: memtable.Record{Key: str, Value: value},
+		Record: memtable.Record{Timestamp: ts, Tombstone: tombstone, Key: str, Value: value},
 		Next:   current.Next,
 		Down:   nil,
 	}
@@ -127,7 +128,7 @@ func (sl *SkipList) WriteElement(str string, value []byte) bool {
 		bttm := &newNode
 		for i := 1; i <= len(upperNodes); i++ {
 			upperNodes[i-1] = Node{
-				Record: memtable.Record{Key: str, Value: value},
+				Record: memtable.Record{Timestamp: ts, Tombstone: tombstone, Key: str, Value: value},
 				Next:   stack[stackLen-i].Next,
 				Down:   bttm,
 			}
@@ -159,9 +160,11 @@ func (sl *SkipList) DeleteElement(str string) error {
 		}
 	}
 	if current.Record.Key == str {
+		current.Record.Tombstone = true
 		current.Record.Value = []byte{}
 		for current.Down != nil {
 			current = current.Down
+			current.Record.Tombstone = true
 			current.Record.Value = []byte{}
 		}
 		return nil
@@ -172,17 +175,18 @@ func (sl *SkipList) DeleteElement(str string) error {
 
 func NewSkipListMemtable(maxHeight, maxSize int) *SkipListMemtable {
 	return &SkipListMemtable{
-		data:    CreateSL(maxHeight),
-		maxSize: maxSize,
-		size:    0,
+		data:      CreateSL(maxHeight),
+		watermark: math.MaxUint32,
+		maxSize:   maxSize,
+		size:      0,
 	}
 }
 
-func (m *SkipListMemtable) Add(key string, value []byte) error {
+func (m *SkipListMemtable) Add(ts [16]byte, tombstone bool, key string, value []byte) error {
 	if m.size >= m.maxSize {
 		return memtable.ErrMemtableFull
 	}
-	newelem := m.data.WriteElement(key, value)
+	newelem := m.data.WriteElement(ts, tombstone, key, value)
 	if newelem {
 		m.size++
 	}
@@ -204,11 +208,6 @@ func (m *SkipListMemtable) Get(key string) ([]byte, bool) {
 	}
 	return []byte{}, false
 }
-
-func (m *SkipListMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {
-	return memtable.LoadFromWALHelper(file, m, offset)
-}
-
 func (m *SkipListMemtable) Flush() *[]memtable.Record {
 	records := make([]memtable.Record, 0, m.size)
 	current := &m.data.levels[m.data.maxHeight-1]
@@ -222,34 +221,15 @@ func (m *SkipListMemtable) Flush() *[]memtable.Record {
 	return &records
 }
 
-// NAPOMENA - OVU LOGIKU PREBACITI U SSTABLE
-
-// // Inicijalizacija Bloom filtera nad SSTable
-// bf := probabilistic.CreateBF(m.maxSize, 99.9)
-
-// blockData := make([]byte, 0, m.maxSize*10)
-//
-// for current.Next != nil {
-// 	current = current.Next
-// 	bf.AddElement(current.Key)
-// 	keyLen := len(current.Key)
-// 	valueLen := len(current.Value)
-// 	blockData = append(blockData, byte(keyLen))
-// 	blockData = append(blockData, []byte(current.Key)...)
-// 	blockData = append(blockData, byte(valueLen))
-// 	blockData = append(blockData, current.Value...)
-// }
-// blockData = append(blockData, make([]byte, 4096-len(blockData))...)
-// // Izgradnja Merkle stabla nad SSTable
-// mt := merkletree.NewMerkleTree()
-// mt.ConstructMerkleTree(blockData, m.blockManager.blockSize)
-// err := m.blockManager.WriteBlock("file.data", blockData)
-// if err != nil {
-// 	return fmt.Errorf("error writing to BlockManager: %v", err)
-// }
-// return nil
-
 // Isto kao prethodna - treba se izmjeniti
 func (m *SkipListMemtable) IsFull() bool {
-	return true
+	return m.size == m.maxSize
+}
+
+func (m *SkipListMemtable) SetWatermark(index uint32) {
+	m.watermark = min(m.watermark, index)
+}
+
+func (m *SkipListMemtable) GetWatermark() uint32 {
+	return m.watermark
 }
