@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"projekat/config"
+	"projekat/structs/blockmanager"
 	"projekat/structs/containers"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
@@ -38,6 +39,9 @@ func main() {
 
 	// Inicijalizacija LRU keša
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
+
+	// Globalni BlockManager
+	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
 	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
 	mtIndex := 0
@@ -209,8 +213,11 @@ func main() {
 						}
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
-						newSSTable := sstable.SSTable{}
-						sstable.CreateSSTable(sstrecords, &newSSTable, cfg.BlockSize)
+						sstableDir := filepath.Join("data", "sstable")
+						_, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize)
+						if err != nil {
+							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
+						}
 					}
 				}
 				// Ako je upis u WAL uspesan, dodaje se u Memtable

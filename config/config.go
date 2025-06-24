@@ -16,4 +16,7 @@ type Config struct {
 	// WAL
 	WalMaxRecordsPerSegment int `json:"WalMaxRecordsPerSegment"`
 	WalBlokcsPerSegment     int `json:"WalBlokcsPerSegment"`
+
+	// SSTable
+	SummaryStep int `json:"SummaryStep"`
 }

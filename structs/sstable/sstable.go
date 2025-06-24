@@ -2,14 +2,17 @@ package sstable
 
 import (
 	"bytes"
+	"crypto/md5"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
-	"sort"
+	"path/filepath"
+	"time"
 
+	"projekat/structs/blockmanager"
 	"projekat/structs/merkletree"
 	"projekat/structs/probabilistic"
 )
@@ -56,7 +59,66 @@ type SSTable struct {
 	Metadata *merkletree.MerkleTree
 }
 
-// Racunanje CRC32 za validaciju zapisa data bloka
+// NewSSTable kreira novu SSTable instancu sa jedinstvenim imenima fajlova
+func NewSSTable(dir string) *SSTable {
+	ts := time.Now().UnixNano()
+	return &SSTable{
+		DataFilePath:     filepath.Join(dir, fmt.Sprintf("%d-Data.db", ts)),
+		IndexFilePath:    filepath.Join(dir, fmt.Sprintf("%d-Index.db", ts)),
+		SummaryFilePath:  filepath.Join(dir, fmt.Sprintf("%d-Summary.db", ts)),
+		FilterFilePath:   filepath.Join(dir, fmt.Sprintf("%d-Filter.db", ts)),
+		MetadataFilePath: filepath.Join(dir, fmt.Sprintf("%d-Metadata.db", ts)),
+	}
+}
+
+// writeBlocks deli ulazni bajt-niz na blokove veličine BlockManager-a i zapisuje svaki blok redom u datoteku.
+func writeBlocks(bm *blockmanager.BlockManager, path string, buf []byte, blockSize int) error {
+	bs := blockSize
+	bm.Block_idx = 0
+	for len(buf) > 0 {
+		n := bs
+		if len(buf) < bs {
+			n = len(buf)
+		}
+		if err := bm.WriteBlock(path, buf[:n]); err != nil {
+			return err
+		}
+		buf = buf[n:]
+	}
+	return nil
+}
+
+// readSegment vraća tačno "length" bajtova počev od "offset" u fajlu.
+func readSegment(bm *blockmanager.BlockManager, path string, offset int64, length int, blockSize int) ([]byte, error) {
+	bs := blockSize
+	startBlk := int(offset / int64(bs))
+	endBlk := int((offset + int64(length-1)) / int64(bs))
+
+	out := make([]byte, length)
+	pos := 0
+	for blk := startBlk; blk <= endBlk; blk++ {
+		block, err := bm.ReadBlock(path, blk)
+		if err != nil {
+			return nil, err
+		}
+		blkStart := 0
+		if blk == startBlk {
+			blkStart = int(offset) % bs
+		}
+		blkEnd := bs
+		if blk == endBlk {
+			blkEnd = (int(offset) + length) % bs
+			if blkEnd == 0 {
+				blkEnd = bs
+			}
+		}
+		copy(out[pos:], block[blkStart:blkEnd])
+		pos += blkEnd - blkStart
+	}
+	return out, nil
+}
+
+// calculateCRC računa CRC32 (IEEE) preko svih polja osim samog CRC-a.
 func calculateCRC(record Record) uint32 {
 	buffer := bytes.Buffer{}
 	binary.Write(&buffer, binary.LittleEndian, record.Timestamp)
@@ -68,344 +130,300 @@ func calculateCRC(record Record) uint32 {
 	return crc32.ChecksumIEEE(buffer.Bytes())
 }
 
-// Kreiranje SSTable sa Bloom filterom, Merkle stablom i summary zapisima
-func CreateSSTable(records []Record, sst *SSTable, step int) error {
-	// sort.Slice(records, func(i, j int) bool {
-	// 	return bytes.Compare(records[i].Key, records[j].Key) < 0
-	// })
-
-	dataFile, err := os.Create(sst.DataFilePath)
-	if err != nil {
-		return err
+// recordBytes serijalizuje Record u binarni format identičan WAL zapisu.
+func recordBytes(r Record) []byte {
+	body := make([]byte, 0, 37+len(r.Key)+len(r.Value))
+	body = append(body, r.Timestamp[:]...)
+	if r.Tombstone {
+		body = append(body, 1)
+	} else {
+		body = append(body, 0)
 	}
-	defer dataFile.Close()
+	body = binary.LittleEndian.AppendUint64(body, r.KeySize)
+	body = binary.LittleEndian.AppendUint64(body, r.ValueSize)
+	body = append(body, r.Key...)
+	body = append(body, r.Value...)
+	r.CRC = crc32.ChecksumIEEE(body)
+	out := binary.LittleEndian.AppendUint32([]byte{}, r.CRC)
+	return append(out, body...)
+}
 
-	indexFile, err := os.Create(sst.IndexFilePath)
-	if err != nil {
-		return err
-	}
-	defer indexFile.Close()
-
-	summaryFile, err := os.Create(sst.SummaryFilePath)
-	if err != nil {
-		return err
-	}
-	defer summaryFile.Close()
-
-	filterFile, err := os.Create(sst.FilterFilePath)
-	if err != nil {
-		return err
-	}
-	defer filterFile.Close()
-
+// CreateSSTable formira Data, Index, Summary, Filter i Metadata fajlove.
+// - records  : sortirani niz zapisa koji se flush-uje iz mem-tabele
+// - dir      : gde smestiti sve fajlove
+// - step     : razmak (u broju zapisa) između dva unosa u Summary-ju
+// - bm       : globalni BlockManager
+// Funkcija vraća *SSTable sa popunjenim BloomFilter-om i MerkleTree-om.
+func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int) (*SSTable, error) {
+	bs := blockSize
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 
-	summaryEntries := []SummaryEntry{}
-	var currentOffset uint64 = 0
-	blockSize := step
+	dataBlk := make([]byte, 0, bs)
+	indexBlk := make([]byte, 0, bs)
+	leaves := make([][]byte, 0)
 
-	for i, record := range records {
-		record.CRC = calculateCRC(record)
+	offset := uint64(0)
+	summaryEntries := make([]SummaryEntry, 0)
 
-		binary.Write(dataFile, binary.LittleEndian, record.CRC)
-		dataFile.Write(record.Timestamp[:])
-		binary.Write(dataFile, binary.LittleEndian, record.Tombstone)
-		binary.Write(dataFile, binary.LittleEndian, record.KeySize)
-		binary.Write(dataFile, binary.LittleEndian, record.ValueSize)
-		dataFile.Write(record.Key)
-		dataFile.Write(record.Value)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+	sst := NewSSTable(dir)
 
-		bloom.AddElement(string(record.Key))
+	for i, rec := range records {
+		rec.KeySize = uint64(len(rec.Key))
+		rec.ValueSize = uint64(len(rec.Value))
+		rec.CRC = calculateCRC(rec)
+		rb := recordBytes(rec)
 
-		binary.Write(indexFile, binary.LittleEndian, record.KeySize)
-		indexFile.Write(record.Key)
-		binary.Write(indexFile, binary.LittleEndian, currentOffset)
-
-		if i%blockSize == 0 {
-			summaryEntries = append(summaryEntries, SummaryEntry{
-				Key:    record.Key,
-				Offset: currentOffset,
-			})
+		if len(dataBlk)+len(rb) > bs {
+			pad := make([]byte, bs-len(dataBlk))
+			dataBlk = append(dataBlk, pad...)
+			if err := bm.WriteBlock(sst.DataFilePath, dataBlk); err != nil {
+				return nil, err
+			}
+			h := md5.Sum(dataBlk)
+			leaves = append(leaves, h[:])
+			dataBlk = make([]byte, 0, bs)
 		}
+		dataBlk = append(dataBlk, rb...)
 
-		currentOffset += uint64(4 + 8 + 1 + 8 + 8 + len(record.Key) + len(record.Value))
+		idxEntry := make([]byte, 0, 8+len(rec.Key)+8)
+		idxEntry = binary.LittleEndian.AppendUint64(idxEntry, rec.KeySize)
+		idxEntry = append(idxEntry, rec.Key...)
+		idxEntry = binary.LittleEndian.AppendUint64(idxEntry, offset)
+		if len(indexBlk)+len(idxEntry) > bs {
+			pad := make([]byte, bs-len(indexBlk))
+			indexBlk = append(indexBlk, pad...)
+			bm.Block_idx = 0
+			if err := bm.WriteBlock(sst.IndexFilePath, indexBlk); err != nil {
+				return nil, err
+			}
+			indexBlk = make([]byte, 0, bs)
+		}
+		indexBlk = append(indexBlk, idxEntry...)
+
+		bloom.AddElement(string(rec.Key))
+		if i%step == 0 {
+			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: offset})
+		}
+		offset += uint64(len(rb))
 	}
 
-	minKey := records[0].Key
-	maxKey := records[len(records)-1].Key
-
-	binary.Write(summaryFile, binary.LittleEndian, uint64(len(minKey)))
-	summaryFile.Write(minKey)
-
-	binary.Write(summaryFile, binary.LittleEndian, uint64(len(maxKey)))
-	summaryFile.Write(maxKey)
-
-	binary.Write(summaryFile, binary.LittleEndian, uint64(len(summaryEntries)))
-
-	for _, entry := range summaryEntries {
-		binary.Write(summaryFile, binary.LittleEndian, uint64(len(entry.Key)))
-		summaryFile.Write(entry.Key)
-		binary.Write(summaryFile, binary.LittleEndian, entry.Offset)
+	if len(dataBlk) > 0 {
+		pad := make([]byte, bs-len(dataBlk))
+		dataBlk = append(dataBlk, pad...)
+		_ = bm.WriteBlock(sst.DataFilePath, dataBlk)
+		h := md5.Sum(dataBlk)
+		leaves = append(leaves, h[:])
+	}
+	if len(indexBlk) > 0 {
+		bm.Block_idx = 0
+		pad := make([]byte, bs-len(indexBlk))
+		indexBlk = append(indexBlk, pad...)
+		_ = bm.WriteBlock(sst.IndexFilePath, indexBlk)
 	}
 
-	filterBytes := bloom.Serialize()
-	_, err = filterFile.Write(filterBytes)
-	if err != nil {
-		return err
+	sum := make([]byte, 0)
+	minK := records[0].Key
+	maxK := records[len(records)-1].Key
+	sum = binary.LittleEndian.AppendUint64(sum, uint64(len(minK)))
+	sum = append(sum, minK...)
+	sum = binary.LittleEndian.AppendUint64(sum, uint64(len(maxK)))
+	sum = append(sum, maxK...)
+	sum = binary.LittleEndian.AppendUint64(sum, uint64(len(summaryEntries)))
+	for _, se := range summaryEntries {
+		sum = binary.LittleEndian.AppendUint64(sum, uint64(len(se.Key)))
+		sum = append(sum, se.Key...)
+		sum = binary.LittleEndian.AppendUint64(sum, se.Offset)
 	}
+	_ = writeBlocks(bm, sst.SummaryFilePath, sum, blockSize)
 
-	dataFileForMerkle, err := os.Open(sst.DataFilePath)
-	if err != nil {
-		return err
+	_ = writeBlocks(bm, sst.FilterFilePath, bloom.Serialize(), blockSize)
+
+	leavesBytes := make([]byte, 0, len(leaves)*16)
+	for _, h := range leaves {
+		leavesBytes = append(leavesBytes, h...)
 	}
-	defer dataFileForMerkle.Close()
-
-	data, err := io.ReadAll(dataFileForMerkle)
-	if err != nil {
-		return err
-	}
-
-	merkleTree := merkletree.NewMerkleTree()
-	merkleTree.ConstructMerkleTree(data, 64)
-
-	metadataFile, err := os.Create(sst.MetadataFilePath)
-	if err != nil {
-		return err
-	}
-	defer metadataFile.Close()
-
-	merkleBytes := merkleTree.Serialize()
-	_, err = metadataFile.Write(merkleBytes)
-	if err != nil {
-		return err
-	}
+	mt := merkletree.NewMerkleTree()
+	mt.ConstructMerkleTree(leavesBytes, 16)
+	_ = writeBlocks(bm, sst.MetadataFilePath, mt.Serialize(), blockSize)
 
 	sst.Filter = &bloom
-	sst.Metadata = &merkleTree
-
-	return nil
+	sst.Metadata = &mt
+	return sst, nil
 }
 
-// Zapisivanje data bloka u datoteku
-func WriteDataFile(records []Record, filePath string) error {
-	sort.Slice(records, func(i, j int) bool {
-		return bytes.Compare(records[i].Key, records[j].Key) < 0
-	})
-
-	file, err := os.Create(filePath)
+// ReadRecordAtOffset čita kompletan Record iz Data fajla počevši od zadatog offseta.
+func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, blockSize int) (*Record, error) {
+	// prvo učitamo fiksni header (CRC+meta = 37 B)
+	header, err := readSegment(bm, path, offs, 37, blockSize)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer file.Close()
+	rdr := bytes.NewReader(header)
 
-	for _, record := range records {
-		record.CRC = calculateCRC(record)
+	rec := &Record{}
+	binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+	rdr.Read(rec.Timestamp[:])
+	binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
+	binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
+	binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
 
-		if err := binary.Write(file, binary.LittleEndian, record.CRC); err != nil {
-			return err
-		}
-		if _, err := file.Write(record.Timestamp[:]); err != nil {
-			return err
-		}
-		if err := binary.Write(file, binary.LittleEndian, record.Tombstone); err != nil {
-			return err
-		}
-		if err := binary.Write(file, binary.LittleEndian, record.KeySize); err != nil {
-			return err
-		}
-		if err := binary.Write(file, binary.LittleEndian, record.ValueSize); err != nil {
-			return err
-		}
-		if _, err := file.Write(record.Key); err != nil {
-			return err
-		}
-		if _, err := file.Write(record.Value); err != nil {
-			return err
-		}
+	total := 37 + int(rec.KeySize) + int(rec.ValueSize)
+	full, err := readSegment(bm, path, offs, total, blockSize)
+	if err != nil {
+		return nil, err
 	}
+	rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
+	rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
 
-	return nil
+	if calculateCRC(*rec) != rec.CRC {
+		return nil, errors.New("CRC mismatch – corrupted record")
+	}
+	return rec, nil
 }
 
-// Citanje data zapisa
-func ReadRecordAtOffset(filePath string, offset int64) (*Record, error) {
-	file, err := os.Open(filePath)
+// ReadIndexBlock čita jedan blok (fixed size) iz Index fajla i parsira sve unose.
+func ReadIndexBlock(bm *blockmanager.BlockManager, path string, blkSize int64, offs int64, blockSize int) ([]Index, error) {
+	buf, err := readSegment(bm, path, offs, int(blkSize), blockSize)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-
-	_, err = file.Seek(offset, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
-
-	record := Record{}
-
-	if err := binary.Read(file, binary.LittleEndian, &record.CRC); err != nil {
-		return nil, err
-	}
-	if err := binary.Read(file, binary.LittleEndian, &record.Timestamp); err != nil {
-		return nil, err
-	}
-	if err := binary.Read(file, binary.LittleEndian, &record.Tombstone); err != nil {
-		return nil, err
-	}
-	if err := binary.Read(file, binary.LittleEndian, &record.KeySize); err != nil {
-		return nil, err
-	}
-	if err := binary.Read(file, binary.LittleEndian, &record.ValueSize); err != nil {
-		return nil, err
-	}
-
-	record.Key = make([]byte, record.KeySize)
-	if _, err := file.Read(record.Key); err != nil {
-		return nil, err
-	}
-
-	record.Value = make([]byte, record.ValueSize)
-	if _, err := file.Read(record.Value); err != nil {
-		return nil, err
-	}
-
-	calculatedCRC := calculateCRC(record)
-	if calculatedCRC != record.CRC {
-		return nil, errors.New("CRC check failed: data is corrupted")
-	}
-
-	return &record, nil
-}
-
-// Pisanje index datoteke
-func WriteIndexFile(indexes []Index, filePath string) error {
-	file, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	for _, idx := range indexes {
-		keySize := uint64(len(idx.Key))
-		if err := binary.Write(file, binary.LittleEndian, keySize); err != nil {
-			return err
-		}
-		if _, err := file.Write(idx.Key); err != nil {
-			return err
-		}
-		if err := binary.Write(file, binary.LittleEndian, idx.Offset); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// Citanje index bloka iz index fajla
-func ReadIndexBlock(filePath string, blockSize int64, offset int64) ([]Index, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	_, err = file.Seek(offset, io.SeekStart)
-	if err != nil {
-		return nil, err
-	}
-
-	buffer := make([]byte, blockSize)
-	bytesRead, err := file.Read(buffer)
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-
-	indexes := []Index{}
-	reader := bytes.NewReader(buffer[:bytesRead])
-
-	for reader.Len() > 0 {
-		var keySize uint64
-		if err := binary.Read(reader, binary.LittleEndian, &keySize); err != nil {
+	rdr := bytes.NewReader(buf)
+	var idxs []Index
+	for rdr.Len() > 0 {
+		var ksz uint64
+		if err := binary.Read(rdr, binary.LittleEndian, &ksz); err != nil {
 			break
 		}
-
-		key := make([]byte, keySize)
-		if _, err := reader.Read(key); err != nil {
+		key := make([]byte, ksz)
+		if _, err := io.ReadFull(rdr, key); err != nil {
 			break
 		}
-
-		var offset uint64
-		if err := binary.Read(reader, binary.LittleEndian, &offset); err != nil {
+		var off uint64
+		if err := binary.Read(rdr, binary.LittleEndian, &off); err != nil {
 			break
 		}
-
-		indexes = append(indexes, Index{Key: key, Offset: offset})
+		idxs = append(idxs, Index{Key: key, Offset: off})
 	}
-
-	return indexes, nil
+	return idxs, nil
 }
 
-// Validacija Merkle stabla
-func ValidateMerkleTree(sst *SSTable, blockSize int) (bool, error) {
-	file, err := os.Open(sst.DataFilePath)
+// LoadSummary stream-parsirа Summary fajl bez učitavanja celokupnog sadržaja u RAM.
+func LoadSummary(bm *blockmanager.BlockManager, path string) (Summary, error) {
+	blk, err := bm.ReadBlock(path, 0)
 	if err != nil {
-		return false, err
+		return Summary{}, err
+	}
+	rdr := bytes.NewReader(blk)
+
+	var minSz, maxSz, cnt uint64
+	binary.Read(rdr, binary.LittleEndian, &minSz)
+	minK := make([]byte, minSz)
+	io.ReadFull(rdr, minK)
+	binary.Read(rdr, binary.LittleEndian, &maxSz)
+	maxK := make([]byte, maxSz)
+	io.ReadFull(rdr, maxK)
+	binary.Read(rdr, binary.LittleEndian, &cnt)
+
+	entries := make([]SummaryEntry, 0, cnt)
+	buf := blk[len(blk)-rdr.Len():]
+	blkIdx := 1
+	for uint64(len(entries)) < cnt {
+		for len(buf) < 17 {
+			nxt, err := bm.ReadBlock(path, blkIdx)
+			if err != nil {
+				return Summary{}, err
+			}
+			blkIdx++
+			buf = append(buf, nxt...)
+		}
+		ksz := binary.LittleEndian.Uint64(buf[:8])
+		need := 8 + int(ksz) + 8
+		for len(buf) < need {
+			nxt, _ := bm.ReadBlock(path, blkIdx)
+			blkIdx++
+			buf = append(buf, nxt...)
+		}
+		key := append([]byte{}, buf[8:8+ksz]...)
+		off := binary.LittleEndian.Uint64(buf[8+ksz : need])
+		entries = append(entries, SummaryEntry{Key: key, Offset: off})
+		buf = buf[need:]
+	}
+	return Summary{MinKey: minK, MaxKey: maxK, Entries: entries}, nil
+}
+
+// LoadBloomFilter učitava Bloom filter iz fajla (fajl je obično mali).
+func LoadBloomFilter(_ *blockmanager.BlockManager, path string) (*probabilistic.BloomFilter, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer file.Close()
 
-	data, err := io.ReadAll(file)
+	bf := &probabilistic.BloomFilter{}
+	if err := bf.Deserialize(file); err != nil {
+		return nil, err
+	}
+	return bf, nil
+}
+
+// LoadMerkleTree deserializuje Merkle stablo sa diska.
+func LoadMerkleTree(_ *blockmanager.BlockManager, path string) (*merkletree.MerkleTree, error) {
+	f, err := os.Open(path)
 	if err != nil {
-		return false, err
+		return nil, err
+	}
+	defer f.Close()
+
+	mt := merkletree.NewMerkleTree()
+	if err := mt.Deserialize(f); err != nil {
+		return nil, err
+	}
+	return &mt, nil
+}
+
+// ValidateMerkleTree ponovo hashira svaki data-blok i poredi sa upisanim stablom.
+// Vraća false i indeks prvog izmenjenog bloka ukoliko se detektuje nepodudaranje.
+func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize int) (bool, error) {
+	bs := blockSize
+	hashes := make([][]byte, 0)
+
+	for blkIdx := 0; ; blkIdx++ {
+		blk, err := bm.ReadBlock(sst.DataFilePath, blkIdx)
+		if err != nil {
+			return false, err
+		}
+		fi, _ := os.Stat(sst.DataFilePath)
+		if int64(blkIdx*bs) >= fi.Size() {
+			break
+		}
+		if int64((blkIdx+1)*bs) > fi.Size() {
+			blk = blk[:fi.Size()-int64(blkIdx*bs)]
+		}
+		h := md5.Sum(blk)
+		hashes = append(hashes, h[:])
+		if int64((blkIdx+1)*bs) >= fi.Size() {
+			break
+		}
 	}
 
-	newTree := merkletree.NewMerkleTree()
-	newTree.ConstructMerkleTree(data, blockSize)
+	concat := make([]byte, 0, len(hashes)*16)
+	for _, h := range hashes {
+		concat = append(concat, h...)
+	}
+	tmp := merkletree.NewMerkleTree()
+	tmp.ConstructMerkleTree(concat, 16)
 
-	if bytes.Equal(newTree.MerkleRoot.Hash, sst.Metadata.MerkleRoot.Hash) {
+	ok, diff := merkletree.Compare(&tmp, sst.Metadata)
+	if ok {
 		return true, nil
 	}
-	return false, errors.New("merkle tree validation failed")
+	return false, fmt.Errorf("promena detektovana – prvi neispravan blok indeks %d", diff)
 }
 
-// Pretraga kljuca u SSTable
-func Search(sst *SSTable, key []byte, summary Summary) (*Record, error) {
-	if !sst.Filter.IsAdded(string(key)) {
-		return nil, fmt.Errorf("key not found (Bloom filter)")
-	}
-
-	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
-		return nil, fmt.Errorf("key not in summary range")
-	}
-
-	indexOffset := FindIndexBlockOffset(summary, key)
-
-	indexes, err := ReadIndexBlock(sst.IndexFilePath, 4096, indexOffset)
-	if err != nil {
-		return nil, err
-	}
-
-	var dataOffset uint64
-	found := false
-	for _, idx := range indexes {
-		if bytes.Equal(idx.Key, key) {
-			dataOffset = idx.Offset
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return nil, fmt.Errorf("key not found in index block")
-	}
-
-	record, err := ReadRecordAtOffset(sst.DataFilePath, int64(dataOffset))
-	if err != nil {
-		return nil, err
-	}
-
-	return record, nil
-}
-
-// Pronalazenje offset-a u summary fajlu
+// FindIndexBlockOffset traži offset Index bloka u Summary-ju za dati ključ.
 func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 	for i := len(summary.Entries) - 1; i >= 0; i-- {
 		if bytes.Compare(summary.Entries[i].Key, key) <= 0 {
@@ -415,107 +433,33 @@ func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 	return 0
 }
 
-// Ucitavanje Bloom filtera iz fajla
-func LoadBloomFilter(filePath string) (*probabilistic.BloomFilter, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
+// Search sprovodi standardni Bloom → Summary → Index → Data redosled.
+func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int) (*Record, error) {
+	if !sst.Filter.IsAdded(string(key)) {
+		return nil, fmt.Errorf("key not found (Bloom filter)")
 	}
-	defer file.Close()
-
-	bf := &probabilistic.BloomFilter{}
-	err = bf.Deserialize(file)
-	if err != nil {
-		return nil, err
+	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
+		return nil, fmt.Errorf("key outside summary range")
 	}
 
-	return bf, nil
-}
-
-// Ucitavanje summary fajla
-func LoadSummary(filePath string) (Summary, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return Summary{}, err
-	}
-	defer file.Close()
-
-	var minKeySize uint64
-	binary.Read(file, binary.LittleEndian, &minKeySize)
-	minKey := make([]byte, minKeySize)
-	file.Read(minKey)
-
-	var maxKeySize uint64
-	binary.Read(file, binary.LittleEndian, &maxKeySize)
-	maxKey := make([]byte, maxKeySize)
-	file.Read(maxKey)
-
-	var entryCount uint64
-	binary.Read(file, binary.LittleEndian, &entryCount)
-
-	entries := make([]SummaryEntry, 0)
-	for i := 0; i < int(entryCount); i++ {
-		var keySize uint64
-		binary.Read(file, binary.LittleEndian, &keySize)
-		key := make([]byte, keySize)
-		file.Read(key)
-
-		var offset uint64
-		binary.Read(file, binary.LittleEndian, &offset)
-
-		entries = append(entries, SummaryEntry{Key: key, Offset: offset})
-	}
-
-	return Summary{MinKey: minKey, MaxKey: maxKey, Entries: entries}, nil
-}
-
-// Ucitavanje Merkle stabla iz fajla
-func LoadMerkleTree(filePath string) (*merkletree.MerkleTree, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	tree := merkletree.NewMerkleTree()
-	err = tree.Deserialize(file)
+	idxOff := FindIndexBlockOffset(summary, key)
+	indices, err := ReadIndexBlock(bm, sst.IndexFilePath, idxBlkSize, idxOff, blockSize)
 	if err != nil {
 		return nil, err
 	}
 
-	return &tree, nil
-}
-
-// Iniciranje validacije Merkle stabla
-func InitiateValidation(dataPath string, metadataPath string, blockSize int) (bool, error) {
-	file, err := os.Open(dataPath)
-	if err != nil {
-		return false, err
+	var dataOff uint64
+	found := false
+	for _, idx := range indices {
+		if bytes.Equal(idx.Key, key) {
+			dataOff = idx.Offset
+			found = true
+			break
+		}
 	}
-	defer file.Close()
-
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return false, err
+	if !found {
+		return nil, fmt.Errorf("key not found in index")
 	}
 
-	newTree := merkletree.NewMerkleTree()
-	newTree.ConstructMerkleTree(data, blockSize)
-
-	metadataFile, err := os.Open(metadataPath)
-	if err != nil {
-		return false, err
-	}
-	defer metadataFile.Close()
-
-	oldTree := merkletree.NewMerkleTree()
-	err = oldTree.Deserialize(metadataFile)
-	if err != nil {
-		return false, err
-	}
-
-	if bytes.Equal(newTree.MerkleRoot.Hash, oldTree.MerkleRoot.Hash) {
-		return true, nil
-	}
-	return false, errors.New("merkle validation failed: data has been modified")
+	return ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
 }
