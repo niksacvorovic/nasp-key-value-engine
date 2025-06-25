@@ -31,32 +31,42 @@ func main() {
 	// Inicijalizuj Config strukturu
 	var cfg config.Config
 
-	// Unmarshal JSON podatek u Config strukturu
+	// Unmarshal JSON podatke u Config strukturu
 	err = json.Unmarshal(data, &cfg)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// -------------------------------------------------------------------------------------------------------------------------------
+	// Block Manager i Block Cache
+	// -------------------------------------------------------------------------------------------------------------------------------
+
 	// Inicijalizacija LRU keša
 	lru := lrucache.NewLRUCache(cfg.LRUCacheSize)
 
-	// Globalni BlockManager
+	// Inicijalizacija globalnog BlockManager
 	bm := blockmanager.NewBlockManager(cfg.BlockSize, cfg.BlockCacheSize)
 
+	// -------------------------------------------------------------------------------------------------------------------------------
+	// Memtabable
+	// -------------------------------------------------------------------------------------------------------------------------------
+
+	// Niz memtable instanci
 	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
 	mtIndex := 0
 
 	// Inicijalizacija niza instanci Memtable-a
-	if cfg.Memtable_struct == "hashMap" {
+	switch cfg.Memtable_struct {
+	case "hashMap":
 		for i := 0; i < cfg.Num_memtables; i++ {
 			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize)
 		}
-	} else if cfg.Memtable_struct == "skipList" {
+	case "skipList":
 		for i := 0; i < cfg.Num_memtables; i++ {
 			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 
-	} else if cfg.Memtable_struct == "BStablo" {
+	case "BStablo":
 		for i := 0; i < cfg.Num_memtables; i++ {
 			memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
 		}
@@ -69,7 +79,7 @@ func main() {
 	// Put do foldera sa wal logovima
 	walDir := filepath.Join("data", "wal")
 
-	// Inicijalizacija WAL-a sa BlockManagerom
+	// Inicijalizacija WAL-a
 	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxRecordsPerSegment, cfg.WalBlokcsPerSegment, cfg.BlockSize, cfg.BlockCacheSize)
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
@@ -85,13 +95,14 @@ func main() {
 	for walIndex := walInstance.FirstSeg; walIndex <= walInstance.SegNum; walIndex++ {
 		records := recordMap[walIndex]
 		for idx := range records {
-			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone,
-				string(records[idx].Key), records[idx].Value)
+			// Dodavanje zapisa u memtable
+			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone, string(records[idx].Key), records[idx].Value)
+
 			// Postavljanje watermarka za svaki Memtable
 			memtableInstances[mtIndex].SetWatermark(walIndex)
+
 			// Provera da li je trenutni Memtable pun
 			if memtableInstances[mtIndex].IsFull() {
-				// Ako je trenutni Memtable pun, prelazi se na sledeci Memtable
 				mtIndex = (mtIndex + 1) % cfg.Num_memtables
 				continue
 			}
