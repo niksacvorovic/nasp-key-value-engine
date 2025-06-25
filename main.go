@@ -57,7 +57,9 @@ func main() {
 		}
 
 	} else if cfg.Memtable_struct == "BStablo" {
-		// NewBStabloMemtable
+		for i := 0; i < cfg.Num_memtables; i++ {
+			memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
+		}
 	}
 
 	// -------------------------------------------------------------------------------------------------------------------------------
