@@ -3,12 +3,16 @@
     "Num_memtables": 5,
     "Memtable_struct": "hashMap", 
     "SkipListLevelNum": 5,
+
     "BlockSize": 128,
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
+
     "FilePath": "file.data",
+
     "TokenRate": 100,
     "TokenInterval": 60,
+    
     "WalMaxRecordsPerSegment": 50,
     "WalBlokcsPerSegment": 3,
     "SummaryStep": 4
