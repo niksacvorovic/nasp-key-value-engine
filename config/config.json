@@ -15,5 +15,7 @@
     
     "WalMaxRecordsPerSegment": 50,
     "WalBlokcsPerSegment": 3,
-    "SummaryStep": 4
+    "SummaryStep": 4,
+
+    "SSTableSingleFile": false
 }

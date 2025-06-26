@@ -24,5 +24,6 @@ type Config struct {
 	WalBlokcsPerSegment     int `json:"WalBlokcsPerSegment"`
 
 	// SSTable
-	SummaryStep int `json:"SummaryStep"`
+	SummaryStep       int  `json:"SummaryStep"`
+	SSTableSingleFile bool `json:"SSTableSingleFile"`
 }

@@ -49,25 +49,43 @@ type Summary struct {
 
 // Struktura SSTable
 type SSTable struct {
+	// Da li je SSTable u jednom fajlu ili više
+	// Ako je SingleSSTable == true, onda se koristi samo SSTableFilePath
+	SingleSSTable bool
+
+	// Putanja do single SSTable fajla
+	SingleFilePath string
+
+	// Putanje do fajlova
 	DataFilePath     string
 	IndexFilePath    string
 	SummaryFilePath  string
 	FilterFilePath   string
 	MetadataFilePath string
 
+	// Pomoćne strukture
 	Filter   *probabilistic.BloomFilter
 	Metadata *merkletree.MerkleTree
 }
 
-// NewSSTable kreira novu SSTable instancu sa jedinstvenim imenima fajlova
-func NewSSTable(dir string) *SSTable {
+// NewSingleFileSSTable kreira SSTable strukturu koja koristi samo jedan fajl za sve podatke.
+func NewSingleFileSSTable(path string) *SSTable {
 	ts := time.Now().UnixNano()
 	return &SSTable{
-		DataFilePath:     filepath.Join(dir, fmt.Sprintf("%d-Data.db", ts)),
-		IndexFilePath:    filepath.Join(dir, fmt.Sprintf("%d-Index.db", ts)),
-		SummaryFilePath:  filepath.Join(dir, fmt.Sprintf("%d-Summary.db", ts)),
-		FilterFilePath:   filepath.Join(dir, fmt.Sprintf("%d-Filter.db", ts)),
-		MetadataFilePath: filepath.Join(dir, fmt.Sprintf("%d-Metadata.db", ts)),
+		SingleFilePath: filepath.Join(path, fmt.Sprintf("%d-SSTable.db", ts)),
+		SingleSSTable:  true,
+	}
+}
+
+func NewMultiFileSSTable(path string) *SSTable {
+	ts := time.Now().UnixNano()
+	return &SSTable{
+		SingleSSTable:    false,
+		DataFilePath:     filepath.Join(path, fmt.Sprintf("%d-Data.db", ts)),
+		IndexFilePath:    filepath.Join(path, fmt.Sprintf("%d-Index.db", ts)),
+		SummaryFilePath:  filepath.Join(path, fmt.Sprintf("%d-Summary.db", ts)),
+		FilterFilePath:   filepath.Join(path, fmt.Sprintf("%d-Filter.db", ts)),
+		MetadataFilePath: filepath.Join(path, fmt.Sprintf("%d-Metadata.db", ts)),
 	}
 }
 
@@ -154,7 +172,19 @@ func recordBytes(r Record) []byte {
 // - step     : razmak (u broju zapisa) između dva unosa u Summary-ju
 // - bm       : globalni BlockManager
 // Funkcija vraća *SSTable sa popunjenim BloomFilter-om i MerkleTree-om.
-func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int) (*SSTable, error) {
+func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, singleFile bool) (*SSTable, error) {
+	if len(records) == 0 {
+		return nil, errors.New("no records to create SSTable")
+	}
+
+	if singleFile {
+		return createSingleFileSSTable(records, dir, step, bm, blockSize)
+	}
+	return createMultiFileSSTable(records, dir, step, bm, blockSize)
+}
+
+// createMultiFileSSTable kreira SSTable u više fajlova koristeći BlockManager.
+func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int) (*SSTable, error) {
 	bs := blockSize
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 
@@ -168,7 +198,7 @@ func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.Bloc
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
-	sst := NewSSTable(dir)
+	sst := NewMultiFileSSTable(dir)
 
 	for i, rec := range records {
 		rec.KeySize = uint64(len(rec.Key))
@@ -248,6 +278,95 @@ func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.Bloc
 	mt := merkletree.NewMerkleTree()
 	mt.ConstructMerkleTree(leavesBytes, 16)
 	_ = writeBlocks(bm, sst.MetadataFilePath, mt.Serialize(), blockSize)
+
+	sst.Filter = &bloom
+	sst.Metadata = &mt
+	return sst, nil
+}
+
+// createSingleFileSSTable kreira SSTable u jednom fajlu koristeci BlockManager.
+func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int) (*SSTable, error) {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, err
+	}
+
+	sst := NewSingleFileSSTable(dir)
+	b := &bytes.Buffer{}
+	bloom := probabilistic.CreateBF(len(records), 0.01)
+	offsetMap := make([]int64, 5)
+
+	dataBuf := &bytes.Buffer{}
+	leaves := make([][]byte, 0)
+	for _, rec := range records {
+		rec.KeySize = uint64(len(rec.Key))
+		rec.ValueSize = uint64(len(rec.Value))
+		rec.CRC = calculateCRC(rec)
+		rb := recordBytes(rec)
+		dataBuf.Write(rb)
+		h := md5.Sum(rb)
+		leaves = append(leaves, h[:])
+		bloom.AddElement(string(rec.Key))
+	}
+	offsetMap[0] = int64(b.Len())
+	b.Write(dataBuf.Bytes())
+
+	indexBuf := &bytes.Buffer{}
+	offset := uint64(0)
+	for _, rec := range records {
+		binary.Write(indexBuf, binary.LittleEndian, rec.KeySize)
+		indexBuf.Write(rec.Key)
+		binary.Write(indexBuf, binary.LittleEndian, offset)
+		offset += uint64(len(recordBytes(rec)))
+	}
+	offsetMap[1] = int64(b.Len())
+	b.Write(indexBuf.Bytes())
+
+	summaryBuf := &bytes.Buffer{}
+	minK := records[0].Key
+	maxK := records[len(records)-1].Key
+	binary.Write(summaryBuf, binary.LittleEndian, uint64(len(minK)))
+	summaryBuf.Write(minK)
+	binary.Write(summaryBuf, binary.LittleEndian, uint64(len(maxK)))
+	summaryBuf.Write(maxK)
+	count := (len(records) + step - 1) / step
+	binary.Write(summaryBuf, binary.LittleEndian, uint64(count))
+	for i := 0; i < len(records); i += step {
+		rec := records[i]
+		binary.Write(summaryBuf, binary.LittleEndian, uint64(len(rec.Key)))
+		summaryBuf.Write(rec.Key)
+		off := uint64(0)
+		for j := 0; j < i; j++ {
+			off += uint64(len(recordBytes(records[j])))
+		}
+		binary.Write(summaryBuf, binary.LittleEndian, off)
+	}
+	offsetMap[2] = int64(b.Len())
+	b.Write(summaryBuf.Bytes())
+
+	filterBytes := bloom.Serialize()
+	offsetMap[3] = int64(b.Len())
+	b.Write(filterBytes)
+
+	leavesBytes := make([]byte, 0, len(leaves)*16)
+	for _, h := range leaves {
+		leavesBytes = append(leavesBytes, h...)
+	}
+	mt := merkletree.NewMerkleTree()
+	mt.ConstructMerkleTree(leavesBytes, 16)
+	metadata := mt.Serialize()
+	offsetMap[4] = int64(b.Len())
+	b.Write(metadata)
+
+	footer := &bytes.Buffer{}
+	for _, off := range offsetMap {
+		binary.Write(footer, binary.LittleEndian, uint64(off))
+	}
+	b.Write(footer.Bytes())
+
+	bm.Block_idx = 0
+	if err := writeBlocks(bm, sst.SingleFilePath, b.Bytes(), blockSize); err != nil {
+		return nil, err
+	}
 
 	sst.Filter = &bloom
 	sst.Metadata = &mt
@@ -463,3 +582,172 @@ func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Sum
 	read, _, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
 	return read, err
 }
+
+// parseFooter čita footer iz SSTable fajla i vraća offsete za Summary, Index, Bloom filter i Metadata.
+func parseFooter(bm *blockmanager.BlockManager, path string, blockSize int) ([]int64, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	size := fi.Size()
+	footerSize := 5 * 8
+	buf, err := readSegment(bm, path, size-int64(footerSize), footerSize, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	offsets := make([]int64, 5)
+	for i := 0; i < 5; i++ {
+		offsets[i] = int64(binary.LittleEndian.Uint64(buf[i*8 : (i+1)*8]))
+	}
+	return offsets, nil
+}
+
+// LoadSummarySingleFile učitava Summary iz jednog SSTable fajla.
+func LoadSummarySingleFile(bm *blockmanager.BlockManager, path string, blockSize int, summaryOffset int64) (Summary, error) {
+	buf, err := readSegment(bm, path, summaryOffset, 4096, blockSize) // conservative max summary size
+	if err != nil {
+		return Summary{}, err
+	}
+	rdr := bytes.NewReader(buf)
+
+	var minSz, maxSz, cnt uint64
+	binary.Read(rdr, binary.LittleEndian, &minSz)
+	minK := make([]byte, minSz)
+	io.ReadFull(rdr, minK)
+	binary.Read(rdr, binary.LittleEndian, &maxSz)
+	maxK := make([]byte, maxSz)
+	io.ReadFull(rdr, maxK)
+	binary.Read(rdr, binary.LittleEndian, &cnt)
+
+	entries := make([]SummaryEntry, 0, cnt)
+	for i := 0; i < int(cnt); i++ {
+		var ksz uint64
+		binary.Read(rdr, binary.LittleEndian, &ksz)
+		key := make([]byte, ksz)
+		io.ReadFull(rdr, key)
+		var off uint64
+		binary.Read(rdr, binary.LittleEndian, &off)
+		entries = append(entries, SummaryEntry{Key: key, Offset: off})
+	}
+	return Summary{MinKey: minK, MaxKey: maxK, Entries: entries}, nil
+}
+
+// LoadBloomFilterSingleFile učitava Bloom filter iz jednog SSTable fajla.
+// func LoadBloomFilterSingleFile(bm *blockmanager.BlockManager, path string, blockSize int, filterOffset int64, nextOffset int64) (*probabilistic.BloomFilter, error) {
+// 	length := nextOffset - filterOffset
+// 	buf, err := readSegment(bm, path, filterOffset, int(length), blockSize)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	bf := &probabilistic.BloomFilter{}
+// 	err = bf.Deserialize(bytes.NewReader(buf))
+// 	return bf, err
+// }
+
+// LoadMerkleTreeSingleFile učitava Merkle stablo iz jednog SSTable fajla.
+// func LoadMerkleTreeSingleFile(bm *blockmanager.BlockManager, path string, blockSize int, metadataOffset int64, footerOffset int64) (*merkletree.MerkleTree, error) {
+// 	length := footerOffset - metadataOffset
+// 	buf, err := readSegment(bm, path, metadataOffset, int(length), blockSize)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	mt := merkletree.NewMerkleTree()
+// 	err = mt.Deserialize(bytes.NewReader(buf))
+// 	return mt, err
+// }
+
+// ReadRecordAtOffsetSingleFile čita Record iz jednog SSTable fajla na osnovu offseta.
+func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, offset int64, blockSize int) (*Record, int, error) {
+	header, err := readSegment(bm, path, offset, 37, blockSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	rdr := bytes.NewReader(header)
+	rec := &Record{}
+	binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+	rdr.Read(rec.Timestamp[:])
+	binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
+	binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
+	binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
+	total := 37 + int(rec.KeySize) + int(rec.ValueSize)
+	full, err := readSegment(bm, path, offset, total, blockSize)
+	if err != nil {
+		return nil, total, err
+	}
+	rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
+	rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
+
+	if calculateCRC(*rec) != rec.CRC {
+		return nil, total, errors.New("CRC mismatch – corrupted record")
+	}
+	return rec, total, nil
+}
+
+// ReadIndexBlockSingleFile čita Index blok iz fajla u jednom SSTable formatu.
+func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexOffset int64, blockSize int) ([]Index, error) {
+	buf, err := readSegment(bm, path, indexOffset, 4096, blockSize)
+	if err != nil {
+		return nil, err
+	}
+	rdr := bytes.NewReader(buf)
+	var idxs []Index
+	for rdr.Len() > 0 {
+		var ksz uint64
+		if err := binary.Read(rdr, binary.LittleEndian, &ksz); err != nil {
+			break
+		}
+		key := make([]byte, ksz)
+		if _, err := io.ReadFull(rdr, key); err != nil {
+			break
+		}
+		var off uint64
+		if err := binary.Read(rdr, binary.LittleEndian, &off); err != nil {
+			break
+		}
+		idxs = append(idxs, Index{Key: key, Offset: off})
+	}
+	return idxs, nil
+}
+
+// SearchSingleFile sprovodi standardni Bloom → Summary → Index → Data redosled za SSTable u jednom fajlu.
+// func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int) (*Record, error) {
+// 	offsets, err := parseFooter(bm, sst.SingleFilePath, blockSize)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	filter, err := LoadBloomFilterSingleFile(bm, sst.SingleFilePath, blockSize, offsets[3], offsets[4])
+// 	if err != nil || !filter.IsAdded(string(key)) {
+// 		return nil, fmt.Errorf("key not found (Bloom filter)")
+// 	}
+
+// 	summary, err := LoadSummarySingleFile(bm, sst.SingleFilePath, blockSize, offsets[2])
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
+// 		return nil, fmt.Errorf("key outside summary range")
+// 	}
+
+// 	idxOff := FindIndexBlockOffset(summary, key)
+// 	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, offsets[1]+idxOff, blockSize)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	var dataOff uint64
+// 	found := false
+// 	for _, idx := range indices {
+// 		if bytes.Equal(idx.Key, key) {
+// 			dataOff = idx.Offset
+// 			found = true
+// 			break
+// 		}
+// 	}
+// 	if !found {
+// 		return nil, fmt.Errorf("key not found in index")
+// 	}
+// 	rec, _, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize)
+// 	return rec, err
+// }

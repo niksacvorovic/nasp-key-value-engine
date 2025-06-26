@@ -227,7 +227,7 @@ func main() {
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
 						sstableDir := filepath.Join("data", "sstable")
-						_, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize)
+						_, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, cfg.SSTableSingleFile)
 						if err != nil {
 							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 						}
