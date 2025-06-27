@@ -200,6 +200,9 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 
 	timestamp := time.Now().UnixNano()
 	sstDir := filepath.Join(dir, fmt.Sprintf("%d-sstable", timestamp))
+	if err := os.MkdirAll(sstDir, 0755); err != nil {
+		return nil, "", err
+	}
 	sst := NewMultiFileSSTable(sstDir, timestamp)
 
 	for i, rec := range records {

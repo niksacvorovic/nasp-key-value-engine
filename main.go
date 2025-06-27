@@ -99,7 +99,7 @@ func main() {
 			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone, string(records[idx].Key), records[idx].Value)
 
 			// Postavljanje watermarka za svaki Memtable
-			memtableInstances[mtIndex].SetWatermark(walIndex)
+			memtableInstances[mtIndex].SetWatermarks(walIndex)
 
 			// Provera da li je trenutni Memtable pun
 			if memtableInstances[mtIndex].IsFull() {
@@ -220,7 +220,7 @@ func main() {
 				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
 			} else {
 				memtableInstances[mtIndex].Add(ts, tombstone, parts[1], value)
-				memtableInstances[mtIndex].SetWatermark(walInstance.SegNum)
+				memtableInstances[mtIndex].SetWatermarks(walInstance.SegNum)
 				// Proveravamo da li je trenutni memtable popunjen
 				if memtableInstances[mtIndex].IsFull() {
 					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
@@ -229,21 +229,14 @@ func main() {
 					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
 					if memtableInstances[mtIndex].IsFull() {
 						// Low watermark provera za brisanje WALa
-						lowWatermark := memtableInstances[mtIndex].GetWatermark()
-						delete := true
-						for i := 1; i < cfg.Num_memtables; i++ {
-							check := (i + mtIndex) % cfg.Num_memtables
-							if lowWatermark >= memtableInstances[check].GetWatermark() {
-								delete = false
-								break
+						// Brišemo sve WAL segmente između low i high watermarka
+						lowWatermark, highWatermark := memtableInstances[mtIndex].GetWatermarks()
+						for i := lowWatermark; i < highWatermark; i++ {
+							deletePath := walInstance.GetSegmentFilename(i)
+							err := os.Remove(deletePath)
+							if err != nil {
+								fmt.Printf("Greška pri brisanju WAL segmenata")
 							}
-						}
-						// Ako svi ostale memtabele imaju veći watermark
-						// odbacujemo segment WAL sa tim rednim brojem
-						if delete {
-							delSeg := walInstance.GetSegmentFilename(lowWatermark)
-							os.Remove(filepath.Join(walDir, delSeg))
-
 						}
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
@@ -259,7 +252,8 @@ func main() {
 							sstable.SizeTieredCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
 								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile)
 						case "Leveled":
-							// sstable.LeveledCompaction(lsmCount, sstableDir, cfg.MaxCountInLevel)
+							sstable.LeveledCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile)
 						}
 					}
 				}

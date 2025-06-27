@@ -1,10 +1,10 @@
 {
-    "MaxMemtableSize": 10,
-    "Num_memtables": 5,
+    "MaxMemtableSize": 3,
+    "Num_memtables": 3,
     "Memtable_struct": "hashMap", 
     "SkipListLevelNum": 5,
 
-    "BlockSize": 128,
+    "BlockSize": 256,
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
 
@@ -14,7 +14,7 @@
     "TokenInterval": 60,
     
     "WalMaxRecordsPerSegment": 50,
-    "WalBlokcsPerSegment": 3,
+    "WalBlokcsPerSegment": 2,
     "SummaryStep": 4,
 
     "SSTableSingleFile": false,

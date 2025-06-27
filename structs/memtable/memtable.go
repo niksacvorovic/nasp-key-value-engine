@@ -21,8 +21,8 @@ type MemtableInterface interface {
 	Get(key string) ([]byte, bool)
 	// PrintData()
 	// LoadFromWAL(file *os.File, offset int64) (int64, error)
-	SetWatermark(index uint32)
-	GetWatermark() uint32
+	SetWatermarks(index uint32)
+	GetWatermarks() (uint32, uint32)
 	Flush() *[]Record
 	IsFull() bool
 }
