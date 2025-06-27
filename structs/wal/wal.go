@@ -336,11 +336,12 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 					continue
 				}
 
-				if newRecord.Type == 0 { // FULL
+				switch newRecord.Type {
+				case 0: // FULL
 					// Dodaj zapis u records
 					records = append(records, newRecord)
 
-				} else if newRecord.Type == 1 { // FIRST
+				case 1: // FIRST
 					// Započi rekonstrukciju partialRecord-a
 					partialRecord = &Record{
 						Timestamp: newRecord.Timestamp,
@@ -349,7 +350,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 						Value:     append([]byte{}, newRecord.Value...),
 					}
 
-				} else if newRecord.Type == 2 { // MIDDLE
+				case 2: // MIDDLE
 					// Dodaj fragmente na već postojeci ključ i/ili vrijednost
 					if partialRecord != nil {
 						partialRecord.Key = append(partialRecord.Key, newRecord.Key...)
@@ -358,7 +359,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 						partialRecord = nil
 					}
 
-				} else if newRecord.Type == 3 { // LAST
+				case 3: // LAST
 					// Završi rekonstrukciju partialRecord-a
 					if partialRecord != nil {
 						partialRecord.Key = append(partialRecord.Key, newRecord.Key...)
@@ -380,7 +381,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 						partialRecord = nil
 					}
 
-				} else {
+				default:
 					// Nepoznat tip – ignoriši
 					partialRecord = nil
 				}
@@ -399,18 +400,6 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 
 	return recordMap, nil
 }
-
-// MarkSegmentAsPersisted obiljezava segment perzistiranim u SSTable-u
-// func (w *WAL) MarkSegmentAsPersisted(segmentPath string) error {
-// Izbrisi iz starih segmenata ako postoji
-// for i := uint32(0); i < w.SegNum; i++ {
-// if filepath.Join(w.Dir, w.segments[i]) == segmentPath {
-// delete(w.segments, i)
-// return os.Remove(segmentPath)
-// }
-// }
-// return nil
-// }
 
 func (w *WAL) WriteOnExit() {
 	w.bm.Block_idx = w.sizes[w.SegNum] - 1
