@@ -271,23 +271,68 @@ func main() {
 				fmt.Println("Greska: GET zahteva <key>")
 				continue
 			}
-			// Pretrazi Memtable po zadatom kljucu
+			key := parts[1]
+
+			found := false
+			var value []byte
+
+			// Pretrazi Memtable
 			for i := 0; i < cfg.MemtableNum; i++ {
-				value, found := memtableInstances[i].Get(parts[1])
+				value, found = memtableInstances[i].Get(key)
 				if found {
-					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
+					// fmt.Println("memtable")
+					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, value)
 					// Zapis u keš
-					lru.UpdateCache(parts[1], value)
+					lru.UpdateCache(key, value)
 					break
 				}
 			}
-
-			// Pretraga keša po zadatom ključu
-			value, found := lru.CheckCache(parts[1])
 			if found {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
 				continue
 			}
+
+			// Pretrazi Cache
+			value, found = lru.CheckCache(key)
+			if found {
+				// fmt.Println("cache")
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, value)
+				continue
+			}
+
+			var record *sstable.Record
+
+			// Pretrazi SSTable-ove
+			if !found {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			Loop:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+
+					for _, dir := range sstableDirs {
+						record, found = sstable.SearchSSTable(dir, key, cfg, bm)
+
+						if found {
+							// fmt.Println("sstable")
+							fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", record.Key, record.Value)
+							break Loop
+						}
+					}
+				}
+			}
+
+			if !found {
+				fmt.Printf("Nije pronadjena vrednost za kljuc: [%s]\n", key)
+			}
+
 		// --------------------------------------------------------------------------------------------------------------------------
 		// DELETE komanda
 		// --------------------------------------------------------------------------------------------------------------------------

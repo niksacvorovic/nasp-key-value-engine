@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"projekat/config"
 	"projekat/structs/blockmanager"
 	"projekat/structs/merkletree"
 	"projekat/structs/probabilistic"
@@ -764,4 +765,47 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 	}
 	rec, _, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize)
 	return rec, err
+}
+
+// SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
+func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockManager) (*Record, bool) {
+	base := filepath.Base(dir)
+	var ts int64
+	if _, err := fmt.Sscanf(base, "%d-sstable", &ts); err != nil {
+		return nil, false
+	}
+
+	var sst *SSTable
+	if cfg.SSTableSingleFile {
+		// Pretrazi po kljucu
+		sst = NewSingleFileSSTable(filepath.Dir(dir), ts)
+		sst.SingleFilePath = filepath.Join(dir, fmt.Sprintf("%d-SSTable.db", ts))
+
+		record, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize)
+		if err == nil {
+			return record, true
+		}
+	} else {
+		sst = NewMultiFileSSTable(dir, ts)
+
+		// Ucitaj summary
+		summary, err := LoadSummary(bm, sst.SummaryFilePath)
+		if err != nil {
+			return nil, false
+		}
+
+		// Ucitaj Bloom filter
+		bloom, err := LoadBloomFilter(bm, sst.FilterFilePath, cfg.BlockSize)
+		if err != nil {
+			return nil, false
+		}
+		sst.Filter = bloom
+
+		// Pretrazi po kljucu
+		record, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize)
+		if err == nil {
+			return record, true
+		}
+	}
+	return nil, false
 }
