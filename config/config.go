@@ -13,8 +13,6 @@ type Config struct {
 	BlockCacheSize int `json:"BlockCacheSize"`
 	LRUCacheSize   int `json:"LRUCacheSize"`
 
-	FilePath string `json:"FilePath"`
-
 	// Access Control
 	TokenRate     int `json:"TokenRate"`
 	TokenInterval int `json:"TokenInterval"`
@@ -26,4 +24,8 @@ type Config struct {
 	// SSTable
 	SummaryStep       int  `json:"SummaryStep"`
 	SSTableSingleFile bool `json:"SSTableSingleFile"`
+
+	// Compactions
+	CompactionAlgorithm string `json:"CompactionAlgorithm"`
+	MaxCountInLevel     int    `json:"MaxCountInLevel"`
 }

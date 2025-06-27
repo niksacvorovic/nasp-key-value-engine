@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"math"
-	"os"
 	"time"
 )
 
@@ -91,44 +90,17 @@ func (bf BloomFilter) Serialize() []byte {
 	return bytes
 }
 
-func (bf *BloomFilter) Deserialize(file *os.File) error {
-	// mbin - m binarno, kbin - k binarno
-	mbin := make([]byte, 4)
-	_, err := file.Read(mbin)
-	if err != nil {
-		panic(err)
-	}
-	m := binary.BigEndian.Uint32(mbin)
-	fields := make([]byte, m)
-	_, err = file.Read(fields)
-	if err != nil {
-		panic(err)
-	}
+func (bf *BloomFilter) Deserialize(bytes []byte) {
+	m := binary.BigEndian.Uint32(bytes[:4])
 	boolarr := make([]bool, m)
 	for i := 0; i < int(m); i++ {
-		if fields[i] == 1 {
-			boolarr[i] = true
-		} else {
-			boolarr[i] = false
-		}
+		boolarr[i] = bytes[4+i] == 1
 	}
 	bf.array = boolarr
-	kbin := make([]byte, 4)
-	_, err = file.Read(kbin)
-	if err != nil {
-		panic(err)
-	}
-	k := binary.BigEndian.Uint32(kbin)
+	k := binary.BigEndian.Uint32(bytes[4+m : 8+m])
 	hasharr := make([]HashWithSeed, k)
-	seedbuffer := make([]byte, 4)
 	for i := 0; i < int(k); i++ {
-		_, err = file.Read(seedbuffer)
-		if err != nil {
-			panic(err)
-		}
-		hash := HashWithSeed{Seed: seedbuffer}
-		hasharr[i] = hash
+		hasharr[i] = HashWithSeed{Seed: bytes[8+m+(4*k) : 12+m+(4*k)]}
 	}
 	bf.hashes = hasharr
-	return nil
 }

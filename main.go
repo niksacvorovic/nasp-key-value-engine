@@ -108,6 +108,27 @@ func main() {
 			}
 		}
 	}
+
+	// -------------------------------------------------------------------------------------------------------------------------------
+	// SSTable i LSM stablo
+	// -------------------------------------------------------------------------------------------------------------------------------
+
+	// Putanja do foldera sa SSTable fajlovima
+	sstableDir := filepath.Join("data", "sstable")
+
+	// Prebrojavanje SSTabli na svakom nivou LSM stabla
+	var lsmCount map[byte]int
+	_, err = os.Stat(sstableDir)
+	if !os.IsNotExist(err) {
+		lsmCount, err = sstable.CheckLSMLevels(bm, sstableDir, cfg.BlockSize)
+		if err != nil {
+			fmt.Println("Greška pri pristupu SSTable fajlovima")
+		}
+	} else {
+		lsmCount = make(map[byte]int)
+		lsmCount[0] = 0
+	}
+
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// Interfejs petlja
 	// -------------------------------------------------------------------------------------------------------------------------------
@@ -226,10 +247,19 @@ func main() {
 						}
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
-						sstableDir := filepath.Join("data", "sstable")
-						_, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, cfg.SSTableSingleFile)
+
+						_, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile)
 						if err != nil {
 							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
+						}
+						lsmCount[0]++
+						// Funkcija za proveru i izvršenje kompakcija
+						switch cfg.CompactionAlgorithm {
+						case "SizeTiered":
+							sstable.SizeTieredCompaction(bm, lsmCount, sstableDir, cfg.MaxCountInLevel,
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile)
+						case "Leveled":
+							// sstable.LeveledCompaction(lsmCount, sstableDir, cfg.MaxCountInLevel)
 						}
 					}
 				}

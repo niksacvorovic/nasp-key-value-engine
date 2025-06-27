@@ -2,8 +2,7 @@ package merkletree
 
 import (
 	"crypto/md5"
-	"io"
-	"os"
+	"encoding/binary"
 	"reflect"
 )
 
@@ -83,38 +82,30 @@ func (mt MerkleTree) Serialize() []byte {
 		}
 		i++
 	}
+	byteCount := binary.BigEndian.AppendUint32([]byte{}, uint32(i))
+	bytes = append(byteCount, bytes...)
 	return bytes
 }
 
-func (mt *MerkleTree) Deserialize(file *os.File) error {
-	lvlnum := make([]byte, 1)
-	level := make([]MerkleNode, 0)
-	hash := make([]byte, 16)
+func (mt *MerkleTree) Deserialize(bytes []byte) {
+	count := binary.BigEndian.Uint32(bytes[:4])
+	var lvlnum byte = 0
 	matrix := make([][]MerkleNode, 0)
-	var current byte = 0
-	for {
-		// PRAVLJENJE DUBOKE KOPIJE
-		hash := append([]byte{}, hash...)
-		_, err := file.Read(lvlnum)
-		if err == io.EOF {
-			matrix = append(matrix, level)
-			break
-		} else if err != nil {
-			panic(err)
+	matrix = append(matrix, make([]MerkleNode, 0))
+	seek := 4
+	i := uint32(0)
+	for i < count {
+		if bytes[seek] > lvlnum {
+			lvlnum++
+			matrix = append(matrix, make([]MerkleNode, 0))
 		}
-		if lvlnum[0] > current {
-			matrix = append(matrix, level)
-			level = make([]MerkleNode, 0)
-			current++
-		}
-		_, err = file.Read(hash)
-		if err != nil {
-			panic(err)
-		}
-		level = append(level, MerkleNode{hash, nil, nil})
+		seek++
+		matrix[lvlnum] = append(matrix[lvlnum], MerkleNode{bytes[seek : seek+16], nil, nil})
+		seek += 16
+		i++
 	}
-	for i := 0; i < len(matrix)-1; i++ {
-		for j := 0; j < len(matrix[i]); j++ {
+	for i := range len(matrix) - 1 {
+		for j := range matrix[i] {
 			if 2*j+2 > len(matrix[i+1]) {
 				break
 			}
@@ -123,7 +114,6 @@ func (mt *MerkleTree) Deserialize(file *os.File) error {
 		}
 	}
 	mt.MerkleRoot = matrix[0][0]
-	return nil
 }
 
 func Compare(this *MerkleTree, other *MerkleTree) (bool, int) {

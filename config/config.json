@@ -17,5 +17,7 @@
     "WalBlokcsPerSegment": 3,
     "SummaryStep": 4,
 
-    "SSTableSingleFile": false
+    "SSTableSingleFile": false,
+    "CompactionAlgorithm":"SizeTiered",
+    "MaxCountInLevel":3
 }

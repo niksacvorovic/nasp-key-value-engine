@@ -308,7 +308,10 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 		records := make([]Record, 0)
 		currentBlock := 0
 		for currentBlock < w.sizes[uint32(currentSeg)] {
-			block, _ := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[uint32(currentSeg)]), currentBlock)
+			block, err := w.bm.ReadBlock(filepath.Join(w.Dir, w.segments[uint32(currentSeg)]), currentBlock)
+			if err != nil {
+				return nil, err
+			}
 			seek := 0
 			if currentBlock == 0 {
 				seek += 7 // Preskoči "WAL" header
