@@ -171,9 +171,9 @@ func recordBytes(r Record) []byte {
 // - step     : razmak (u broju zapisa) između dva unosa u Summary-ju
 // - bm       : globalni BlockManager
 // Funkcija vraća *SSTable sa popunjenim BloomFilter-om i MerkleTree-om.
-func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, singleFile bool) (*SSTable, error) {
+func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, singleFile bool) (*SSTable, string, error) {
 	if len(records) == 0 {
-		return nil, errors.New("no records to create SSTable")
+		return nil, "", errors.New("no records to create SSTable")
 	}
 
 	if singleFile {
@@ -183,7 +183,7 @@ func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.Bloc
 }
 
 // createMultiFileSSTable kreira SSTable u više fajlova koristeći BlockManager.
-func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, error) {
+func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, string, error) {
 	bs := blockSize
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 
@@ -195,7 +195,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	summaryEntries := make([]SummaryEntry, 0)
 
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	timestamp := time.Now().UnixNano()
@@ -212,7 +212,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 			pad := make([]byte, bs-len(dataBlk))
 			dataBlk = append(dataBlk, pad...)
 			if err := bm.WriteBlock(sst.DataFilePath, dataBlk); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			h := md5.Sum(dataBlk)
 			leaves = append(leaves, h[:])
@@ -229,7 +229,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 			indexBlk = append(indexBlk, pad...)
 			bm.Block_idx = 0
 			if err := bm.WriteBlock(sst.IndexFilePath, indexBlk); err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			indexBlk = make([]byte, 0, bs)
 		}
@@ -284,13 +284,13 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 
 	sst.Filter = &bloom
 	sst.Metadata = &mt
-	return sst, nil
+	return sst, sstDir, nil
 }
 
 // createSingleFileSSTable kreira SSTable u jednom fajlu koristeci BlockManager.
-func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, error) {
+func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	timestamp := time.Now().UnixNano()
@@ -371,12 +371,12 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 
 	bm.Block_idx = 0
 	if err := writeBlocks(bm, sst.SingleFilePath, b.Bytes(), blockSize); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	sst.Filter = &bloom
 	sst.Metadata = &mt
-	return sst, nil
+	return sst, sstDir, nil
 }
 
 // ReadRecordAtOffset čita kompletan Record iz Data fajla počevši od zadatog offseta.

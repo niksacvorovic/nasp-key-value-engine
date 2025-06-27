@@ -10,25 +10,26 @@ import (
 )
 
 func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
-	dir string, step int, single bool, lsm byte) (*SSTable, error) {
+	dir string, step int, single bool, lsm byte) (*SSTable, string, error) {
 
 	recordMatrix := make([][]*Record, len(tables))
+	// Učitavanje svih Summary fajlova
 	summaries := make([]Summary, len(tables))
 	for i := range tables {
 		if tables[i].SingleSSTable {
 			summary, err := LoadSummary(bm, tables[i].SummaryFilePath)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			summaries = append(summaries, summary)
 		} else {
 			offsets, err := parseFooter(bm, tables[i].SingleFilePath, blockSize)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			summary, err := LoadSummarySingleFile(bm, tables[i].SingleFilePath, blockSize, offsets[2])
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			summaries = append(summaries, summary)
 		}
@@ -41,7 +42,7 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 		for {
 			record, length, err := ReadRecordAtOffset(bm, tables[i].DataFilePath, offset, blockSize)
 			if err != nil {
-				return nil, err
+				return nil, "", err
 			}
 			records = append(records, record)
 			if bytes.Equal(record.Key, maxKey) {
@@ -82,15 +83,15 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 		}
 		sortedRecords = append(sortedRecords, *nextRecord)
 	}
-	compacted, err := CreateSSTable(sortedRecords, dir, step, bm, blockSize, lsm, single)
+	compacted, sstDir, err := CreateSSTable(sortedRecords, dir, step, bm, blockSize, lsm, single)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return compacted, nil
+	return compacted, sstDir, nil
 }
 
-func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int) (map[byte]int, error) {
-	levelsMap := make(map[byte]int)
+func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int) (map[byte][]string, error) {
+	levelsMap := make(map[byte][]string)
 	dir, err := os.ReadDir(dirPath)
 	if err != nil {
 		return nil, err
@@ -114,11 +115,10 @@ func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int
 					return nil, err
 				}
 				_, ok := levelsMap[summary.Compaction]
-				if ok {
-					levelsMap[summary.Compaction]++
-				} else {
-					levelsMap[summary.Compaction] = 1
+				if !ok {
+					levelsMap[summary.Compaction] = make([]string, 0)
 				}
+				levelsMap[summary.Compaction] = append(levelsMap[summary.Compaction], subDirPath)
 			} else {
 				for _, f := range files {
 					if strings.HasSuffix(f.Name(), "Summary.db") {
@@ -128,11 +128,10 @@ func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int
 							return nil, err
 						}
 						_, ok := levelsMap[summary.Compaction]
-						if ok {
-							levelsMap[summary.Compaction]++
-						} else {
-							levelsMap[summary.Compaction] = 1
+						if !ok {
+							levelsMap[summary.Compaction] = make([]string, 0)
 						}
+						levelsMap[summary.Compaction] = append(levelsMap[summary.Compaction], subDirPath)
 					}
 				}
 			}
@@ -141,107 +140,125 @@ func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int
 	return levelsMap, nil
 }
 
-func SizeTieredCompaction(bm *blockmanager.BlockManager, lsmCount map[byte]int, dirPath string,
+func SizeTieredCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, dirPath string,
 	maxInLevel int, blockSize int, step int, single bool) error {
 	loop := true
 	for loop {
 		loop = false
-		for k, count := range lsmCount {
-			if count > maxInLevel {
+		for k, level := range *lsm {
+			if len(level) > maxInLevel {
 				tables := make([]*SSTable, 0)
 				loop = true
-				dir, err := os.ReadDir(dirPath)
-				if err != nil {
-					return err
-				}
-			search:
-				for _, dirEntry := range dir {
-					if dirEntry.IsDir() {
-						subDirPath := filepath.Join(dirPath, dirEntry.Name())
-						files, err := os.ReadDir(subDirPath)
-						if err != nil {
-							return err
+				for _, subdirPath := range level {
+					files, err := os.ReadDir(subdirPath)
+					if err != nil {
+						return nil
+					}
+					if len(files) == 1 {
+						filePath := filepath.Join(subdirPath, files[0].Name())
+						tables = append(tables, &SSTable{SingleSSTable: true, SingleFilePath: filePath})
+					} else {
+						var dataPath string
+						for _, f := range files {
+							if strings.HasSuffix(f.Name(), "Data.db") {
+								dataPath = filepath.Join(subdirPath, f.Name())
+							}
 						}
-						if len(files) == 1 {
-							filePath := filepath.Join(subDirPath, files[0].Name())
-							offsets, err := parseFooter(bm, filePath, blockSize)
-							if err != nil {
-								return err
-							}
-							summary, err := LoadSummarySingleFile(bm, filePath, blockSize, offsets[2])
-							if err != nil {
-								return err
-							}
-							if summary.Compaction == k {
-								tables = append(tables, &SSTable{SingleSSTable: true, SingleFilePath: filePath})
-								if len(tables) == count {
-									break search
-								}
-							}
-						} else {
-							var dataPath string
-							for _, f := range files {
-								if strings.HasSuffix(f.Name(), "Data.db") {
-									dataPath = filepath.Join(subDirPath, f.Name())
-								}
-							}
-							for _, f := range files {
-								if strings.HasSuffix(f.Name(), "Summary.db") {
-									summaryPath := filepath.Join(subDirPath, f.Name())
-									summary, err := LoadSummary(bm, summaryPath)
-									if err != nil {
-										return err
-									}
-									if summary.Compaction == k {
-										tables = append(tables, &SSTable{SingleSSTable: false,
-											SummaryFilePath: summaryPath,
-											DataFilePath:    dataPath})
-										if len(tables) == count {
-											break search
-										}
-									}
-								}
+						for _, f := range files {
+							if strings.HasSuffix(f.Name(), "Summary.db") {
+								summaryPath := filepath.Join(subdirPath, f.Name())
+								tables = append(tables, &SSTable{SingleSSTable: false,
+									SummaryFilePath: summaryPath,
+									DataFilePath:    dataPath})
 							}
 						}
 					}
 				}
-				Compaction(tables, blockSize, bm, dirPath, step, single, k+1)
-				lsmCount[k] = 0
-				_, ok := lsmCount[k+1]
-				if ok {
-					lsmCount[k+1]++
-				} else {
-					lsmCount[k+1] = 1
+				_, sstDir, err := Compaction(tables, blockSize, bm, dirPath, step, single, k+1)
+				if err != nil {
+					return err
 				}
+				// Brisanje SSTabela koje su kompaktovane
+				for _, path := range level {
+					err := os.Remove(path)
+					if err != nil {
+						return err
+					}
+				}
+				(*lsm)[k] = make([]string, 0)
+				_, ok := (*lsm)[k+1]
+				if !ok {
+					(*lsm)[k+1] = make([]string, 0)
+				}
+				(*lsm)[k+1] = append((*lsm)[k+1], sstDir)
 			}
 		}
 	}
 	return nil
 }
 
-func LeveledCompaction(bm *blockmanager.BlockManager, lsmCount map[byte]int, dirPath string,
+func LeveledCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, dirPath string,
 	maxInLevel int, blockSize int, step int, single bool) error {
-	// loop := true
-	// for loop {
-	// 	loop = false
-	// 	for k, count := range lsmCount {
-	// 		if count > maxInLevel {
-	// 			tables := make([]*SSTable, 0)
-	// 			loop = true
-	// 			dir, err := os.ReadDir(dirPath)
-	// 			if err != nil {
-	// 				return err
-	// 			}
+	loop := true
+	for loop {
+		loop = false
+		for k, level := range *lsm {
+			leveledMax := maxInLevel
+			for i := byte(0); i < k; i++ {
+				leveledMax *= 10
+			}
+			if len(level) > leveledMax {
+				loop = true
+				_, ok := (*lsm)[k+1]
+				if ok {
+					// Kompakcija ukoliko na sledećem nivou ima tabeli
+				} else {
+					// Ako nema, prebacujemo jednu tabelu u sledeći nivo
+					files, err := os.ReadDir(level[0])
+					if err != nil {
+						return err
+					}
+					if len(files) == 1 {
+						filePath := filepath.Join(level[0], files[0].Name())
+						offsets, err := parseFooter(bm, filePath, blockSize)
+						if err != nil {
+							return err
+						}
+						summaryBlock, err := bm.ReadBlock(filePath, int(offsets[2])/blockSize)
+						if err != nil {
+							return nil
+						}
+						summaryBlock[offsets[2]%int64(blockSize)] = k + 1
+						bm.Block_idx = int(offsets[2]) / blockSize
+						err = bm.WriteBlock(filePath, summaryBlock)
+						if err != nil {
+							return err
+						}
 
-	// 			lsmCount[k] = 0
-	// 			_, ok := lsmCount[k+1]
-	// 			if ok {
-	// 				lsmCount[k+1]++
-	// 			} else {
-	// 				lsmCount[k+1] = 1
-	// 			}
-	// 		}
-	// 	}
-	// }
+					} else {
+						for _, f := range files {
+							if strings.HasSuffix(f.Name(), "Summary.db") {
+								summaryPath := filepath.Join(level[0], f.Name())
+								summaryBlock, err := bm.ReadBlock(summaryPath, 0)
+								if err != nil {
+									return err
+								}
+								summaryBlock[0] = k + 1
+								bm.Block_idx = 0
+								err = bm.WriteBlock(summaryPath, summaryBlock)
+								if err != nil {
+									return err
+								}
+							}
+						}
+					}
+					// Dodajemo novi nivo LSM stablu a iz starog izbacujemo nulti element
+					(*lsm)[k+1] = make([]string, 0)
+					(*lsm)[k+1] = append((*lsm)[k+1], level[0])
+					(*lsm)[k] = (*lsm)[k][1:]
+				}
+			}
+		}
+	}
 	return nil
 }
