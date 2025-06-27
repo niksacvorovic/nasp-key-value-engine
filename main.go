@@ -52,22 +52,22 @@ func main() {
 	// -------------------------------------------------------------------------------------------------------------------------------
 
 	// Niz memtable instanci
-	memtableInstances := make([]memtable.MemtableInterface, cfg.Num_memtables)
+	memtableInstances := make([]memtable.MemtableInterface, cfg.MemtableNum)
 	mtIndex := 0
 
 	// Inicijalizacija niza instanci Memtable-a
-	switch cfg.Memtable_struct {
+	switch cfg.MemtableStruct {
 	case "hashMap":
-		for i := 0; i < cfg.Num_memtables; i++ {
+		for i := 0; i < cfg.MemtableNum; i++ {
 			memtableInstances[i] = containers.NewHashMapMemtable(cfg.MaxMemtableSize)
 		}
 	case "skipList":
-		for i := 0; i < cfg.Num_memtables; i++ {
+		for i := 0; i < cfg.MemtableNum; i++ {
 			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 
 	case "BStablo":
-		for i := 0; i < cfg.Num_memtables; i++ {
+		for i := 0; i < cfg.MemtableNum; i++ {
 			memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
 		}
 	}
@@ -80,7 +80,7 @@ func main() {
 	walDir := filepath.Join("data", "wal")
 
 	// Inicijalizacija WAL-a
-	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxRecordsPerSegment, cfg.WalBlokcsPerSegment, cfg.BlockSize, cfg.BlockCacheSize)
+	walInstance, err := wal.NewWAL(walDir, cfg.WalMaxRecordsPerSegment, cfg.WalBlocksPerSegment, cfg.BlockSize, cfg.BlockCacheSize)
 	if err != nil {
 		log.Fatalf("Greška pri inicijalizaciji WAL-a: %v", err)
 	}
@@ -103,7 +103,7 @@ func main() {
 
 			// Provera da li je trenutni Memtable pun
 			if memtableInstances[mtIndex].IsFull() {
-				mtIndex = (mtIndex + 1) % cfg.Num_memtables
+				mtIndex = (mtIndex + 1) % cfg.MemtableNum
 				continue
 			}
 		}
@@ -224,7 +224,7 @@ func main() {
 				// Proveravamo da li je trenutni memtable popunjen
 				if memtableInstances[mtIndex].IsFull() {
 					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
-					mtIndex = (mtIndex + 1) % cfg.Num_memtables
+					mtIndex = (mtIndex + 1) % cfg.MemtableNum
 					// Ako je i sledeći memtable pun - svi su puni
 					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
 					if memtableInstances[mtIndex].IsFull() {
@@ -272,7 +272,7 @@ func main() {
 				continue
 			}
 			// Pretrazi Memtable po zadatom kljucu
-			for i := 0; i < cfg.Num_memtables; i++ {
+			for i := 0; i < cfg.MemtableNum; i++ {
 				value, found := memtableInstances[i].Get(parts[1])
 				if found {
 					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", parts[1], value)
@@ -307,7 +307,7 @@ func main() {
 			var value []byte
 			var found bool
 			delIndex := 0
-			for delIndex < cfg.Num_memtables {
+			for delIndex < cfg.MemtableNum {
 				value, found = memtableInstances[delIndex].Get(parts[1])
 				if found {
 					break

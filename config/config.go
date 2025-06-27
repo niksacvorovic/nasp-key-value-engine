@@ -4,8 +4,8 @@ package config
 type Config struct {
 	// Memtable
 	MaxMemtableSize  int    `json:"MaxMemtableSize"`
-	Num_memtables    int    `json:"Num_memtables"`
-	Memtable_struct  string `json:"Memtable_struct"`
+	MemtableNum      int    `json:"MemtableNum"`
+	MemtableStruct   string `json:"MemtableStruct"`
 	SkipListLevelNum int    `json:"SkipListLevelNum"`
 
 	// Block Manager and Block Cache
@@ -19,7 +19,7 @@ type Config struct {
 
 	// WAL
 	WalMaxRecordsPerSegment int `json:"WalMaxRecordsPerSegment"`
-	WalBlokcsPerSegment     int `json:"WalBlokcsPerSegment"`
+	WalBlocksPerSegment     int `json:"WalBlocksPerSegment"`
 
 	// SSTable
 	SummaryStep       int  `json:"SummaryStep"`
