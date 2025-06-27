@@ -8,16 +8,15 @@
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
 
-    "FilePath": "file.data",
-
     "TokenRate": 100,
     "TokenInterval": 60,
     
     "WalMaxRecordsPerSegment": 50,
     "WalBlokcsPerSegment": 3,
-    "SummaryStep": 4,
 
+    "SummaryStep": 4,
     "SSTableSingleFile": false,
+
     "CompactionAlgorithm":"SizeTiered",
     "MaxCountInLevel":3
 }
