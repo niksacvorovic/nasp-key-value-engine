@@ -2,7 +2,6 @@ package containers
 
 import (
 	"errors"
-	"math"
 	"math/rand"
 
 	"projekat/structs/memtable"
@@ -20,11 +19,10 @@ type SkipList struct {
 }
 
 type SkipListMemtable struct {
-	data          *SkipList
-	lowWatermark  uint32
-	highWatermark uint32
-	size          int
-	maxSize       int
+	data      *SkipList
+	watermark uint32
+	size      int
+	maxSize   int
 }
 
 func (s *SkipList) roll() int {
@@ -176,11 +174,10 @@ func (sl *SkipList) DeleteElement(str string) error {
 
 func NewSkipListMemtable(maxHeight, maxSize int) *SkipListMemtable {
 	return &SkipListMemtable{
-		data:          CreateSL(maxHeight),
-		lowWatermark:  math.MaxUint32,
-		highWatermark: 0,
-		maxSize:       maxSize,
-		size:          0,
+		data:      CreateSL(maxHeight),
+		watermark: 0,
+		maxSize:   maxSize,
+		size:      0,
 	}
 }
 
@@ -228,11 +225,10 @@ func (m *SkipListMemtable) IsFull() bool {
 	return m.size == m.maxSize
 }
 
-func (m *SkipListMemtable) SetWatermarks(index uint32) {
-	m.lowWatermark = min(m.lowWatermark, index)
-	m.highWatermark = max(m.highWatermark, index)
+func (m *SkipListMemtable) SetWatermark(index uint32) {
+	m.watermark = max(m.watermark, index)
 }
 
-func (m *SkipListMemtable) GetWatermarks() (uint32, uint32) {
-	return m.lowWatermark, m.highWatermark
+func (m *SkipListMemtable) GetWatermark() uint32 {
+	return m.watermark
 }

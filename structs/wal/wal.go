@@ -122,6 +122,9 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 			}
 		}
 	}
+	if first == math.MaxUint32 {
+		first = 0
+	}
 	if len(orderedFiles) == 0 {
 		orderedFiles[segNum] = fmt.Sprintf("wal_%04d.log", segNum)
 	}
@@ -138,6 +141,7 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 	} else {
 		sizes[segNum] = int(fileinfo.Size()) / blockSize
 	}
+	file.Close()
 	// Vrati instancu WAL-a
 	return &WAL{
 		bm:                  newBM,
@@ -279,10 +283,11 @@ func (w *WAL) rotateSegment() error {
 	// Kreiraj novi segment
 	w.SegNum++
 	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.SegNum))
-	_, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	file, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
 	// Dodaj novi segment u spisak segmenata
 	w.segments[w.SegNum] = fmt.Sprintf("wal_%04d.log", w.SegNum)

@@ -2,7 +2,6 @@ package containers
 
 import (
 	"fmt"
-	"math"
 	"sort"
 
 	"projekat/structs/memtable"
@@ -10,19 +9,17 @@ import (
 
 // HashMapMemtable implementira MemtableInterface koristeci mapu
 type HashMapMemtable struct {
-	data          map[string]memtable.Record
-	lowWatermark  uint32
-	highWatermark uint32
-	maxSize       int
+	data      map[string]memtable.Record
+	watermark uint32
+	maxSize   int
 }
 
 // NewHashMapMemtable kreira novu instancu HashMapMemtable-a
 func NewHashMapMemtable(maxSize int) *HashMapMemtable {
 	return &HashMapMemtable{
-		data:          make(map[string]memtable.Record),
-		lowWatermark:  math.MaxUint32,
-		highWatermark: 0,
-		maxSize:       maxSize,
+		data:      make(map[string]memtable.Record),
+		watermark: 0,
+		maxSize:   maxSize,
 	}
 }
 
@@ -83,11 +80,10 @@ func (m *HashMapMemtable) Flush() *[]memtable.Record {
 	return &records
 }
 
-func (m *HashMapMemtable) SetWatermarks(index uint32) {
-	m.lowWatermark = min(m.lowWatermark, index)
-	m.highWatermark = max(m.highWatermark, index)
+func (m *HashMapMemtable) SetWatermark(index uint32) {
+	m.watermark = max(m.watermark, index)
 }
 
-func (m *HashMapMemtable) GetWatermarks() (uint32, uint32) {
-	return m.lowWatermark, m.highWatermark
+func (m *HashMapMemtable) GetWatermark() uint32 {
+	return m.watermark
 }

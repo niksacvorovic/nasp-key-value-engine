@@ -1,26 +1,23 @@
 package containers
 
 import (
-	"math"
 	//"errors"
 	"projekat/structs/memtable"
 )
 
 type BTreeMemtable struct {
-	tree          *BTree
-	size          int
-	maxSize       int
-	lowWatermark  uint32
-	highWatermark uint32
+	tree      *BTree
+	size      int
+	maxSize   int
+	watermark uint32
 }
 
 func NewBTreeMemtable(maxSize int) *BTreeMemtable {
 	return &BTreeMemtable{
-		tree:          NewBTree(),
-		size:          0,
-		maxSize:       maxSize,
-		lowWatermark:  math.MaxUint32,
-		highWatermark: 0,
+		tree:      NewBTree(),
+		size:      0,
+		maxSize:   maxSize,
+		watermark: 0,
 	}
 }
 
@@ -87,17 +84,14 @@ func (m *BTreeMemtable) collectRecords(node *BTreeNode, records *[]memtable.Reco
 	}
 }
 
-func (m *BTreeMemtable) SetWatermarks(index uint32) {
-	if index < m.lowWatermark {
-		m.lowWatermark = index
-	}
-	if index > m.highWatermark {
-		m.highWatermark = index
+func (m *BTreeMemtable) SetWatermark(index uint32) {
+	if index > m.watermark {
+		m.watermark = index
 	}
 }
 
-func (m *BTreeMemtable) GetWatermarks() (uint32, uint32) {
-	return m.lowWatermark, m.highWatermark
+func (m *BTreeMemtable) GetWatermark() uint32 {
+	return m.watermark
 }
 
 func (m *BTreeMemtable) IsFull() bool {
