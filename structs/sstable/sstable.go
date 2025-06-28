@@ -384,11 +384,11 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 }
 
 // ReadRecordAtOffset čita kompletan Record iz Data fajla počevši od zadatog offseta.
-func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, blockSize int) (*Record, int, error) {
+func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, blockSize int) (*Record, error) {
 	// prvo učitamo fiksni header (CRC+meta = 37 B)
 	header, err := readSegment(bm, path, offs, 37, blockSize)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	rdr := bytes.NewReader(header)
 
@@ -402,15 +402,15 @@ func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, 
 	total := 37 + int(rec.KeySize) + int(rec.ValueSize)
 	full, err := readSegment(bm, path, offs, total, blockSize)
 	if err != nil {
-		return nil, total, err
+		return nil, err
 	}
 	rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
 	rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
 
 	if calculateCRC(*rec) != rec.CRC {
-		return nil, total, errors.New("CRC mismatch – corrupted record")
+		return nil, errors.New("CRC mismatch – corrupted record")
 	}
-	return rec, total, nil
+	return rec, nil
 }
 
 // ReadIndexBlock čita jedan blok (fixed size) iz Index fajla i parsira sve unose.
@@ -592,7 +592,7 @@ func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Sum
 	if !found {
 		return nil, fmt.Errorf("key not found in index")
 	}
-	read, _, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
+	read, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
 	return read, err
 }
 

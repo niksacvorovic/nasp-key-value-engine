@@ -8,7 +8,7 @@
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
 
-    "TokenRate": 100,
+    "TokenRate": 10,
     "TokenInterval": 60,
     
     "WalMaxRecordsPerSegment": 50,
@@ -18,5 +18,5 @@
     "SSTableSingleFile": false,
 
     "CompactionAlgorithm":"SizeTiered",
-    "MaxCountInLevel":3
+    "MaxCountInLevel":2
 }

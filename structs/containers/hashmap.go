@@ -31,7 +31,7 @@ func (m *HashMapMemtable) Add(ts [16]byte, tombstone bool, key string, value []b
 
 // Vraca true ako je memtable pun, a u suprotnom false
 func (m *HashMapMemtable) IsFull() bool {
-	return len(m.data) >= m.maxSize+1
+	return len(m.data) >= m.maxSize
 }
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
@@ -72,8 +72,8 @@ func (m *HashMapMemtable) Flush() *[]memtable.Record {
 	sort.Strings(sortedKeys)
 	// Dodajemo vrednosti u niz
 	records := make([]memtable.Record, 0, len(m.data))
-	for i := range sortedKeys {
-		records = append(records, m.data[sortedKeys[i]])
+	for _, key := range sortedKeys {
+		records = append(records, m.data[key])
 	}
 	// Resetujemo Memtable
 	m.data = make(map[string]memtable.Record)

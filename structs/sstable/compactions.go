@@ -1,7 +1,6 @@
 package sstable
 
 import (
-	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -60,51 +59,59 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 	dir string, step int, single bool, lsm byte) (*SSTable, string, error) {
 
 	recordMatrix := make([][]*Record, len(tables))
-	// Učitavanje svih Summary fajlova
-	summaries := make([]Summary, len(tables))
-	for i := range tables {
-		if tables[i].SingleSSTable {
-			summary, err := LoadSummary(bm, tables[i].SummaryFilePath)
-			if err != nil {
-				return nil, "", err
-			}
-			summaries = append(summaries, summary)
-		} else {
-			offsets, err := parseFooter(bm, tables[i].SingleFilePath, blockSize)
-			if err != nil {
-				return nil, "", err
-			}
-			summary, err := LoadSummarySingleFile(bm, tables[i].SingleFilePath, blockSize, offsets[2])
-			if err != nil {
-				return nil, "", err
-			}
-			summaries = append(summaries, summary)
-		}
-	}
-	// Parsiranje svih zapisa u tabeli
-	for i := range tables {
+	// Učitavanje svih zapisa iz svih tabela
+	for _, table := range tables {
 		records := make([]*Record, 0)
-		maxKey := summaries[i].MaxKey
-		offset := int64(0)
-		for {
-			record, length, err := ReadRecordAtOffset(bm, tables[i].DataFilePath, offset, blockSize)
+		if table.SingleSSTable {
+			indexFile, err := os.Stat(table.IndexFilePath)
+			indexSize := indexFile.Size()
 			if err != nil {
 				return nil, "", err
 			}
-			records = append(records, record)
-			if bytes.Equal(record.Key, maxKey) {
-				break
+			indexSizeInBlocks := int(indexSize) / blockSize
+			for i := range indexSizeInBlocks {
+				currentOffset := blockSize * i
+				indices, err := ReadIndexBlock(bm, table.IndexFilePath, int64(blockSize), int64(currentOffset), blockSize)
+				if err != nil {
+					return nil, "", err
+				}
+				for _, idx := range indices {
+					rec, err := ReadRecordAtOffset(bm, table.DataFilePath, int64(idx.Offset), blockSize)
+					if err != nil {
+						return nil, "", err
+					}
+					records = append(records, rec)
+				}
 			}
-			offset += int64(length)
+		} else {
+			offsets, err := parseFooter(bm, table.SingleFilePath, blockSize)
+			if err != nil {
+				return nil, "", err
+			}
+			currentOffset := offsets[1]
+			for currentOffset < offsets[2] {
+				indices, err := ReadIndexBlockSingleFile(bm, table.IndexFilePath, currentOffset, blockSize)
+				if err != nil {
+					return nil, "", err
+				}
+				for _, idx := range indices {
+					rec, err := ReadRecordAtOffset(bm, table.DataFilePath, int64(idx.Offset), blockSize)
+					if err != nil {
+						return nil, "", err
+					}
+					records = append(records, rec)
+				}
+				currentOffset += int64(blockSize)
+			}
 		}
 		recordMatrix = append(recordMatrix, records)
 	}
-	indexes := make([]int, len(tables))
+	cursors := make([]int, len(tables))
 	sortedRecords := make([]Record, 0)
 	for {
 		// Maksimalna vrednost za string, iteriramo i tražimo najmanju vrednost
 		nextKey := "\xff"
-		for i, index := range indexes {
+		for i, index := range cursors {
 			if index == len(recordMatrix[i]) {
 				continue
 			}
@@ -117,15 +124,15 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 			break
 		}
 		var nextRecord *Record = nil
-		for i, index := range indexes {
-			if nextKey == string(recordMatrix[i][index].Key) {
+		for i, cursor := range cursors {
+			if nextKey == string(recordMatrix[i][cursor].Key) {
 				if nextRecord == nil {
-					nextRecord = recordMatrix[i][index]
+					nextRecord = recordMatrix[i][cursor]
 					// Ako imaju isti ključ - poredimo timestampove
-				} else if binary.LittleEndian.Uint64(nextRecord.Timestamp[:8]) < binary.LittleEndian.Uint64(recordMatrix[i][index].Timestamp[:8]) {
-					nextRecord = recordMatrix[i][index]
+				} else if binary.LittleEndian.Uint64(nextRecord.Timestamp[:8]) < binary.LittleEndian.Uint64(recordMatrix[i][cursor].Timestamp[:8]) {
+					nextRecord = recordMatrix[i][cursor]
 				}
-				indexes[i]++
+				cursors[i]++
 			}
 		}
 		sortedRecords = append(sortedRecords, *nextRecord)

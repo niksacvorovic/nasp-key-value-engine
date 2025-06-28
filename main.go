@@ -94,7 +94,8 @@ func main() {
 	// Dodavanje WAL zapisa u Memtabele
 	for walIndex := walInstance.FirstSeg; walIndex <= walInstance.SegNum; walIndex++ {
 		records := recordMap[walIndex]
-		for idx := range records {
+		idx := 0
+		for idx < len(records) {
 			// Dodavanje zapisa u memtable
 			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone, string(records[idx].Key), records[idx].Value)
 
@@ -106,6 +107,7 @@ func main() {
 				mtIndex = (mtIndex + 1) % cfg.MemtableNum
 				continue
 			}
+			idx++
 		}
 	}
 
@@ -229,7 +231,7 @@ func main() {
 					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
 					if memtableInstances[mtIndex].IsFull() {
 						// Low watermark provera za brisanje WALa
-						// Brišemo sve WAL segmente između low i high watermarka
+						// Brišemo sve WAL segmente između trenutno najstarijeg i watermarka
 						watermark := memtableInstances[mtIndex].GetWatermark()
 						for i := walInstance.FirstSeg; i < watermark; i++ {
 							deletePath := walInstance.GetSegmentFilename(i)
