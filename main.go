@@ -92,24 +92,23 @@ func main() {
 	}
 
 	// Dodavanje WAL zapisa u Memtabele
-	for walIndex := walInstance.FirstSeg; walIndex <= walInstance.SegNum; walIndex++ {
-		records := recordMap[walIndex]
-		idx := 0
-		for idx < len(records) {
+	for w, records := range recordMap {
+		for _, rec := range records {
 			// Dodavanje zapisa u memtable
-			memtableInstances[mtIndex].Add(records[idx].Timestamp, records[idx].Tombstone, string(records[idx].Key), records[idx].Value)
+			memtableInstances[mtIndex].Add(rec.Timestamp, rec.Tombstone, string(rec.Key), rec.Value)
 
 			// Postavljanje watermarka za svaki Memtable
-			memtableInstances[mtIndex].SetWatermark(walIndex)
+			memtableInstances[mtIndex].SetWatermark(w)
 
 			// Provera da li je trenutni Memtable pun
 			if memtableInstances[mtIndex].IsFull() {
 				mtIndex = (mtIndex + 1) % cfg.MemtableNum
-				continue
 			}
-			idx++
 		}
 	}
+
+	// Čuvanje prvog slobodnog indeksa za Token Bucket
+	tokenIndex := mtIndex
 
 	// -------------------------------------------------------------------------------------------------------------------------------
 	// SSTable i LSM stablo
@@ -161,7 +160,7 @@ func main() {
 		command := strings.ToUpper(parts[0])
 
 		// Kontrola pristupa
-		tokenIndex := mtIndex
+		// Token bucket će se uvek čuvati u prvoj slobodnoj memtabeli pri pokretanju
 		if command == "GET" || command == "PUT" || command == "DELETE" {
 			bucket, ok := memtableInstances[tokenIndex].Get("_TOKEN_BUCKET")
 			if !ok {
@@ -170,7 +169,7 @@ func main() {
 				newbucket := make([]byte, 0)
 				newbucket = binary.BigEndian.AppendUint64(newbucket, newtimestamp)
 				newbucket = append(newbucket, newtokens)
-				memtableInstances[0].Add([16]byte{}, false, "_TOKEN_BUCKET", newbucket)
+				memtableInstances[tokenIndex].Add([16]byte{}, false, "_TOKEN_BUCKET", newbucket)
 				bucket = newbucket
 			}
 			timestamp := binary.BigEndian.Uint64(bucket[0:8])

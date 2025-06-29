@@ -205,7 +205,8 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		return nil, "", err
 	}
 	sst := NewMultiFileSSTable(sstDir, timestamp)
-
+	dataBlockIndex := 0
+	indexBlockIndex := 0
 	for i, rec := range records {
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
@@ -215,9 +216,11 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		if len(dataBlk)+len(rb) > bs {
 			pad := make([]byte, bs-len(dataBlk))
 			dataBlk = append(dataBlk, pad...)
+			bm.Block_idx = dataBlockIndex
 			if err := bm.WriteBlock(sst.DataFilePath, dataBlk); err != nil {
 				return nil, "", err
 			}
+			dataBlockIndex++
 			h := md5.Sum(dataBlk)
 			leaves = append(leaves, h[:])
 			dataBlk = make([]byte, 0, bs)
@@ -231,10 +234,11 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		if len(indexBlk)+len(idxEntry) > bs {
 			pad := make([]byte, bs-len(indexBlk))
 			indexBlk = append(indexBlk, pad...)
-			bm.Block_idx = 0
+			bm.Block_idx = indexBlockIndex
 			if err := bm.WriteBlock(sst.IndexFilePath, indexBlk); err != nil {
 				return nil, "", err
 			}
+			indexBlockIndex++
 			indexBlk = make([]byte, 0, bs)
 		}
 		indexBlk = append(indexBlk, idxEntry...)
@@ -249,6 +253,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	if len(dataBlk) > 0 {
 		pad := make([]byte, bs-len(dataBlk))
 		dataBlk = append(dataBlk, pad...)
+		bm.Block_idx = dataBlockIndex
 		_ = bm.WriteBlock(sst.DataFilePath, dataBlk)
 		h := md5.Sum(dataBlk)
 		leaves = append(leaves, h[:])
@@ -256,6 +261,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	if len(indexBlk) > 0 {
 		bm.Block_idx = 0
 		pad := make([]byte, bs-len(indexBlk))
+		bm.Block_idx = indexBlockIndex
 		indexBlk = append(indexBlk, pad...)
 		_ = bm.WriteBlock(sst.IndexFilePath, indexBlk)
 	}

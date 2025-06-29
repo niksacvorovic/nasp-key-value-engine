@@ -399,7 +399,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 			}
 			currentBlock += 1
 		}
-		recordMap[w.SegNum] = records
+		recordMap[currentSeg] = records
 		currentSeg += 1
 	}
 
