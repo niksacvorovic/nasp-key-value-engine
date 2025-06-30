@@ -221,7 +221,7 @@ func main() {
 				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
 			} else {
 				memtableInstances[mtIndex].Add(ts, tombstone, parts[1], value)
-				memtableInstances[mtIndex].SetWatermark(walInstance.SegNum)
+				memtableInstances[mtIndex].SetWatermark(walInstance.LastSeg)
 				// Proveravamo da li je trenutni memtable popunjen
 				if memtableInstances[mtIndex].IsFull() {
 					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")

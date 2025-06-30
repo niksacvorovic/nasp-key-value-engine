@@ -33,7 +33,7 @@ type WAL struct {
 	buffer              []byte                     // Buffer
 	blockSize           int                        // Veličina jednog bloka
 	walBlocksPerSegment int                        // Broj blokova po segmentu
-	SegNum              uint32                     // Indeks poslednjeg segmenta
+	LastSeg             uint32                     // Indeks poslednjeg segmenta
 	FirstSeg            uint32                     // Redni broj prvog segmenta
 }
 
@@ -151,7 +151,7 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 		buffer:              buf,
 		walBlocksPerSegment: walBlocksPerSegment,
 		blockSize:           blockSize,
-		SegNum:              last,
+		LastSeg:             last,
 		FirstSeg:            first,
 	}, nil
 }
@@ -181,10 +181,10 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) ([16]byte, error) 
 		} else {
 			// Ako ne može da stane header - upisujemo padding na ostatak bloka
 			if blockSpace < 38 {
-				w.bm.Block_idx = w.sizes[w.SegNum] - 1
-				w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
+				w.bm.Block_idx = w.sizes[w.LastSeg] - 1
+				w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.LastSeg]), w.buffer)
 				w.buffer = make([]byte, 0)
-				w.sizes[w.SegNum]++
+				w.sizes[w.LastSeg]++
 				if w.bm.Block_idx == w.walBlocksPerSegment {
 					w.rotateSegment()
 				}
@@ -194,8 +194,8 @@ func (w *WAL) AppendRecord(tombstone bool, key, value []byte) ([16]byte, error) 
 				for i := range segments {
 					w.buffer = append(w.buffer, segments[i]...)
 					if len(w.buffer) == w.blockSize {
-						w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
-						w.sizes[w.SegNum]++
+						w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.LastSeg]), w.buffer)
+						w.sizes[w.LastSeg]++
 						w.buffer = make([]byte, 0)
 						if w.bm.Block_idx == w.walBlocksPerSegment {
 							w.rotateSegment()
@@ -281,8 +281,8 @@ func (w *WAL) SegmentRecord(rec Record, blockSpace int) [][]byte {
 // rotateSegment kreira novi segmentni fajl
 func (w *WAL) rotateSegment() error {
 	// Kreiraj novi segment
-	w.SegNum++
-	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.SegNum))
+	w.LastSeg++
+	newPath := filepath.Join(w.Dir, fmt.Sprintf("wal_%04d.log", w.LastSeg))
 	file, err := os.OpenFile(newPath, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
@@ -290,13 +290,13 @@ func (w *WAL) rotateSegment() error {
 	defer file.Close()
 
 	// Dodaj novi segment u spisak segmenata
-	w.segments[w.SegNum] = fmt.Sprintf("wal_%04d.log", w.SegNum)
-	w.sizes[w.SegNum] = 1
+	w.segments[w.LastSeg] = fmt.Sprintf("wal_%04d.log", w.LastSeg)
+	w.sizes[w.LastSeg] = 1
 
 	// Resetuj sve vrijednosti
 	w.buffer = make([]byte, 0, w.blockSize)
 	w.buffer = append(w.buffer, []byte("WAL")...)
-	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.SegNum))
+	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.LastSeg))
 	w.bm.Block_idx = 0
 	return nil
 }
@@ -308,7 +308,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 
 	// Prođi kroz svaki segment
 	currentSeg := w.FirstSeg
-	for currentSeg <= w.SegNum {
+	for currentSeg <= w.LastSeg {
 		// Prođi kroz svaki blok
 		records := make([]Record, 0)
 		currentBlock := 0
@@ -328,7 +328,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 				newseek, end := newRecord.BytesToRecord(&block, seek)
 				if end {
 					w.buffer = block[:newseek]
-					recordMap[w.SegNum] = records
+					recordMap[w.LastSeg] = records
 					return recordMap, nil
 				}
 
@@ -407,8 +407,8 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 }
 
 func (w *WAL) WriteOnExit() {
-	w.bm.Block_idx = w.sizes[w.SegNum] - 1
-	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.SegNum]), w.buffer)
+	w.bm.Block_idx = w.sizes[w.LastSeg] - 1
+	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.LastSeg]), w.buffer)
 }
 
 func (w *WAL) GetSegmentFilename(index uint32) string {

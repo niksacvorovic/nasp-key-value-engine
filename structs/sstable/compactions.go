@@ -1,6 +1,7 @@
 package sstable
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -25,9 +26,9 @@ func readTableFromDir(subdirPath string) (*SSTable, error) {
 			}
 		}
 		for _, f := range files {
-			if strings.HasSuffix(f.Name(), "Summary.db") {
-				summaryPath := filepath.Join(subdirPath, f.Name())
-				return &SSTable{SingleSSTable: false, SummaryFilePath: summaryPath, DataFilePath: dataPath}, nil
+			if strings.HasSuffix(f.Name(), "Index.db") {
+				indexPath := filepath.Join(subdirPath, f.Name())
+				return &SSTable{SingleSSTable: false, IndexFilePath: indexPath, DataFilePath: dataPath}, nil
 			}
 		}
 	}
@@ -38,11 +39,11 @@ func readSummaryFromTable(sst *SSTable, bm *blockmanager.BlockManager, blockSize
 	var sum Summary
 	var err error = nil
 	if sst.SingleSSTable {
-		offsets, err := parseFooter(bm, sst.SingleFilePath, blockSize)
+		offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 		if err != nil {
 			return nil, err
 		}
-		sum, err = LoadSummarySingleFile(bm, sst.SingleFilePath, blockSize, offsets[2])
+		sum, err = LoadSummarySingleFile(bm, sst.SingleFilePath, blockSize, offsets[2], offsets[3])
 		if err != nil {
 			return nil, err
 		}
@@ -59,64 +60,52 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 	dir string, step int, single bool, lsm byte) (*SSTable, string, error) {
 
 	recordMatrix := make([][]*Record, len(tables))
-	// Učitavanje svih zapisa iz svih tabela
-	for _, table := range tables {
-		records := make([]*Record, 0)
-		if table.SingleSSTable {
-			indexFile, err := os.Stat(table.IndexFilePath)
-			indexSize := indexFile.Size()
-			if err != nil {
-				return nil, "", err
-			}
-			indexSizeInBlocks := int(indexSize) / blockSize
-			for i := range indexSizeInBlocks {
-				currentOffset := blockSize * i
-				indices, err := ReadIndexBlock(bm, table.IndexFilePath, int64(blockSize), int64(currentOffset), blockSize)
-				if err != nil {
-					return nil, "", err
-				}
-				for _, idx := range indices {
-					rec, err := ReadRecordAtOffset(bm, table.DataFilePath, int64(idx.Offset), blockSize)
-					if err != nil {
-						return nil, "", err
-					}
-					records = append(records, rec)
-				}
-			}
-		} else {
-			offsets, err := parseFooter(bm, table.SingleFilePath, blockSize)
-			if err != nil {
-				return nil, "", err
-			}
-			currentOffset := offsets[1]
-			for currentOffset < offsets[2] {
-				indices, err := ReadIndexBlockSingleFile(bm, table.IndexFilePath, currentOffset, blockSize)
-				if err != nil {
-					return nil, "", err
-				}
-				for _, idx := range indices {
-					rec, err := ReadRecordAtOffset(bm, table.DataFilePath, int64(idx.Offset), blockSize)
-					if err != nil {
-						return nil, "", err
-					}
-					records = append(records, rec)
-				}
-				currentOffset += int64(blockSize)
-			}
+	// Učitavanje svih Summary-ja
+	summaries := make([]*Summary, len(tables))
+	for i := range tables {
+		sum, err := readSummaryFromTable(tables[i], bm, blockSize)
+		if err != nil {
+			return nil, "", err
 		}
-		recordMatrix = append(recordMatrix, records)
+		summaries[i] = sum
 	}
+	// Parsiranje svih zapisa u tabeli
+	for i := range tables {
+		records := make([]*Record, 0)
+		maxKey := summaries[i].MaxKey
+		offset := int64(0)
+		var path string
+		if tables[i].SingleSSTable {
+			path = tables[i].SingleFilePath
+			offset += 48
+		} else {
+			path = tables[i].DataFilePath
+		}
+		for {
+			record, length, err := ReadRecordAtOffset(bm, path, offset, blockSize)
+			if err != nil {
+				return nil, "", err
+			}
+			records = append(records, record)
+			if bytes.Equal(record.Key, maxKey) {
+				break
+			}
+			offset += int64(length)
+		}
+		recordMatrix[i] = records
+	}
+
 	cursors := make([]int, len(tables))
 	sortedRecords := make([]Record, 0)
 	for {
 		// Maksimalna vrednost za string, iteriramo i tražimo najmanju vrednost
 		nextKey := "\xff"
-		for i, index := range cursors {
-			if index == len(recordMatrix[i]) {
+		for i, cursor := range cursors {
+			if cursor == len(recordMatrix[i]) {
 				continue
 			}
-			if string(recordMatrix[i][index].Key) < nextKey {
-				nextKey = string(recordMatrix[i][index].Key)
+			if string(recordMatrix[i][cursor].Key) < nextKey {
+				nextKey = string(recordMatrix[i][cursor].Key)
 			}
 		}
 		// Ovo je moguće samo ako preskočimo sve indekse - sve zapise smo prošli
@@ -125,6 +114,9 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 		}
 		var nextRecord *Record = nil
 		for i, cursor := range cursors {
+			if cursor == len(recordMatrix[i]) {
+				continue
+			}
 			if nextKey == string(recordMatrix[i][cursor].Key) {
 				if nextRecord == nil {
 					nextRecord = recordMatrix[i][cursor]
@@ -160,11 +152,11 @@ func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int
 			}
 			if len(files) == 1 {
 				filePath := filepath.Join(subDirPath, files[0].Name())
-				offsets, err := parseFooter(bm, filePath, blockSize)
+				offsets, err := parseHeader(bm, filePath, blockSize)
 				if err != nil {
 					return nil, err
 				}
-				summary, err := LoadSummarySingleFile(bm, filePath, blockSize, offsets[2])
+				summary, err := LoadSummarySingleFile(bm, filePath, blockSize, offsets[2], offsets[3])
 				if err != nil {
 					return nil, err
 				}
@@ -216,7 +208,7 @@ func SizeTieredCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string,
 				}
 				// Brisanje SSTabela koje su kompaktovane
 				for _, path := range level {
-					err := os.Remove(path)
+					err := os.RemoveAll(path)
 					if err != nil {
 						return err
 					}
@@ -241,7 +233,7 @@ func moveToLowerLevel(levelDir string, bm *blockmanager.BlockManager, blockSize 
 	}
 	if len(files) == 1 {
 		filePath := filepath.Join(levelDir, files[0].Name())
-		offsets, err := parseFooter(bm, filePath, blockSize)
+		offsets, err := parseHeader(bm, filePath, blockSize)
 		if err != nil {
 			return err
 		}
@@ -342,7 +334,7 @@ func LeveledCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, di
 						}
 						// Uklanjamo sve kompaktovane tabele i izbacujemo ih iz LSM stabla
 						for _, p := range compactedDirs {
-							err := os.Remove(p)
+							err := os.RemoveAll(p)
 							if err != nil {
 								return nil
 							}
