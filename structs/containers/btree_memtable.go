@@ -32,7 +32,7 @@ func (m *BTreeMemtable) Add(ts [16]byte, tombstone bool, key string, value []byt
 	_, err := m.tree.ReadElement(key)
 	isNew := err != nil
 
-	err = m.tree.WriteElement(key, value)
+	err = m.tree.WriteElement(key, value, ts)
 	if err != nil {
 		return err
 	}
@@ -71,7 +71,7 @@ func (m *BTreeMemtable) collectRecords(node *BTreeNode, records *[]memtable.Reco
 			*records = append(*records, memtable.Record{
 				Key:       node.Keys[i],
 				Value:     node.Values[i],
-				Timestamp: [16]byte{},
+				Timestamp: node.Timestamps[i],
 				Tombstone: false,
 			})
 		}

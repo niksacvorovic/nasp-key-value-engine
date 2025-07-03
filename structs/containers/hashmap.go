@@ -57,11 +57,6 @@ func (m *HashMapMemtable) PrintData() {
 	}
 }
 
-// LoadFromWAL ucitava podatke iz WAL fajla u HashMapMemtable
-// func (m *HashMapMemtable) LoadFromWAL(file *os.File, offset int64) (int64, error) {
-// return memtable.LoadFromWALHelper(file, m, offset)
-// }
-
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
 func (m *HashMapMemtable) Flush() *[]memtable.Record {
 	// Sortiramo ključeve

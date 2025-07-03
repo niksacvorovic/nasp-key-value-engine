@@ -78,7 +78,7 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 			current = current.Next
 		}
 	}
-	if current.Record.Key == str {
+	if current.Record.Key == str && !current.Record.Tombstone {
 		return current.Record.Value, nil
 	} else {
 		return current.Record.Value, errors.New("nonexistent value")
@@ -94,6 +94,8 @@ func (sl *SkipList) WriteElement(ts [16]byte, tombstone bool, str string, value 
 		if current.Record.Key == str {
 			for current != nil {
 				current.Record.Value = value
+				current.Record.Timestamp = ts
+				current.Record.Tombstone = tombstone
 				current = current.Down
 			}
 			return false

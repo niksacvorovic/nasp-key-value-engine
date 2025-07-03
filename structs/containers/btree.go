@@ -8,11 +8,12 @@ import (
 const degree = 3
 
 type BTreeNode struct {
-	IsLeaf   bool
-	Keys     []string
-	Values   [][]byte
-	Deleted  []bool
-	Children []*BTreeNode
+	IsLeaf     bool
+	Keys       []string
+	Values     [][]byte
+	Deleted    []bool
+	Timestamps [][16]byte
+	Children   []*BTreeNode
 }
 
 type BTree struct {
@@ -24,11 +25,12 @@ type BTree struct {
 func NewBTree() *BTree {
 	return &BTree{
 		Root: &BTreeNode{
-			IsLeaf:   true,
-			Keys:     []string{},
-			Values:   [][]byte{},
-			Deleted:  []bool{},
-			Children: []*BTreeNode{},
+			IsLeaf:     true,
+			Keys:       []string{},
+			Values:     [][]byte{},
+			Deleted:    []bool{},
+			Timestamps: [][16]byte{},
+			Children:   []*BTreeNode{},
 		},
 	}
 }
@@ -59,22 +61,22 @@ func (t *BTree) ReadElement(key string) ([]byte, error) {
 
 // ---------- DODAVANJE ----------
 
-func (t *BTree) WriteElement(key string, value []byte) error {
+func (t *BTree) WriteElement(key string, value []byte, ts [16]byte) error {
 	if len(t.Root.Keys) == 2*degree-1 { //ako je koren pun
 		newRoot := &BTreeNode{
 			IsLeaf:   false,
 			Children: []*BTreeNode{t.Root}, //stari koren je dete novog
 		}
-		t.splitChild(newRoot, 0)             //podeli puno dete
-		t.insertNonFull(newRoot, key, value) //ubacujemo kljuc u novi koren ili potomke
+		t.splitChild(newRoot, 0)                 //podeli puno dete
+		t.insertNonFull(newRoot, key, value, ts) //ubacujemo kljuc u novi koren ili potomke
 		t.Root = newRoot
 	} else {
-		t.insertNonFull(t.Root, key, value)
+		t.insertNonFull(t.Root, key, value, ts)
 	}
 	return nil
 }
 
-func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte) {
+func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]byte) {
 	i := len(node.Keys) - 1
 
 	if node.IsLeaf { //da li kljuc vec postoji u listu
@@ -83,8 +85,10 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte) {
 				if node.Deleted[j] { //ako je obrisan, ozivimo ga
 					node.Values[j] = value
 					node.Deleted[j] = false
+					node.Timestamps[j] = ts
 				} else if string(node.Values[j]) != string(value) {
 					node.Values[j] = value //zamenimo vrednost ako nije ista (URADILA I AZURIRANJE, ne skodi)
+					node.Timestamps[j] = ts
 				}
 				return
 			}
@@ -93,16 +97,19 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte) {
 		node.Keys = append(node.Keys, "")
 		node.Values = append(node.Values, nil)
 		node.Deleted = append(node.Deleted, false)
+		node.Timestamps = append(node.Timestamps, ts)
 
 		for i >= 0 && key < node.Keys[i] { //oslobadjamo mesto za novi kljuc
 			node.Keys[i+1] = node.Keys[i]
 			node.Values[i+1] = node.Values[i]
 			node.Deleted[i+1] = node.Deleted[i]
+			node.Timestamps[i+1] = node.Timestamps[i]
 			i--
 		}
 		node.Keys[i+1] = key
 		node.Values[i+1] = value
 		node.Deleted[i+1] = false
+		node.Timestamps[i+1] = ts
 	} else { //ako nije list, gledamo u koje dete ulazimo
 		for i >= 0 && key < node.Keys[i] {
 			i--
@@ -118,7 +125,7 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte) {
 				}
 			}
 		}
-		t.insertNonFull(node.Children[i], key, value)
+		t.insertNonFull(node.Children[i], key, value, ts)
 	}
 }
 
@@ -136,15 +143,18 @@ func (t *BTree) tryRotate(parent *BTreeNode, i int) bool {
 			child.Keys = append([]string{parent.Keys[i-1]}, child.Keys...)
 			child.Values = append([][]byte{parent.Values[i-1]}, child.Values...)
 			child.Deleted = append([]bool{parent.Deleted[i-1]}, child.Deleted...)
+			child.Timestamps = append([][16]byte{parent.Timestamps[i-1]}, child.Timestamps...)
 
 			idx := len(left.Keys) - 1
 			parent.Keys[i-1] = left.Keys[idx]
 			parent.Values[i-1] = left.Values[idx]
 			parent.Deleted[i-1] = left.Deleted[idx]
+			parent.Timestamps[i-1] = left.Timestamps[idx]
 
 			left.Keys = left.Keys[:idx]
 			left.Values = left.Values[:idx]
 			left.Deleted = left.Deleted[:idx]
+			left.Timestamps = left.Timestamps[:idx]
 
 			if !child.IsLeaf { //ako dete nije list, pomeri i decu sa leve strane
 				child.Children = append([]*BTreeNode{left.Children[idx+1]}, child.Children...)
@@ -161,14 +171,17 @@ func (t *BTree) tryRotate(parent *BTreeNode, i int) bool {
 			child.Keys = append(child.Keys, parent.Keys[i])
 			child.Values = append(child.Values, parent.Values[i])
 			child.Deleted = append(child.Deleted, parent.Deleted[i])
+			child.Timestamps = append(child.Timestamps, parent.Timestamps[i])
 
 			parent.Keys[i] = right.Keys[0]
 			parent.Values[i] = right.Values[0]
 			parent.Deleted[i] = right.Deleted[0]
+			parent.Timestamps[i] = right.Timestamps[0]
 
 			right.Keys = right.Keys[1:]
 			right.Values = right.Values[1:]
 			right.Deleted = right.Deleted[1:]
+			right.Timestamps = right.Timestamps[1:]
 
 			if !child.IsLeaf {
 				child.Children = append(child.Children, right.Children[0])
@@ -189,11 +202,12 @@ func (t *BTree) splitChild(parent *BTreeNode, i int) {
 	mid := degree - 1 //indeks srednjeg kljuca koji ide gore u roditalja
 
 	newNode := &BTreeNode{
-		IsLeaf:   full.IsLeaf,
-		Keys:     append([]string{}, full.Keys[mid+1:]...), //cela desna polovina ide u novi cvor
-		Values:   append([][]byte{}, full.Values[mid+1:]...),
-		Deleted:  append([]bool{}, full.Deleted[mid+1:]...),
-		Children: []*BTreeNode{},
+		IsLeaf:     full.IsLeaf,
+		Keys:       append([]string{}, full.Keys[mid+1:]...), //cela desna polovina ide u novi cvor
+		Values:     append([][]byte{}, full.Values[mid+1:]...),
+		Deleted:    append([]bool{}, full.Deleted[mid+1:]...),
+		Timestamps: append([][16]byte{}, full.Timestamps[mid+1:]...),
+		Children:   []*BTreeNode{},
 	}
 
 	if !full.IsLeaf {
@@ -205,12 +219,14 @@ func (t *BTree) splitChild(parent *BTreeNode, i int) {
 	parent.Keys = append(parent.Keys[:i], append([]string{full.Keys[mid]}, parent.Keys[i:]...)...)
 	parent.Values = append(parent.Values[:i], append([][]byte{full.Values[mid]}, parent.Values[i:]...)...)
 	parent.Deleted = append(parent.Deleted[:i], append([]bool{full.Deleted[mid]}, parent.Deleted[i:]...)...)
+	parent.Timestamps = append(parent.Timestamps[:i], append([][16]byte{full.Timestamps[mid]}, parent.Timestamps[i:]...)...)
 	parent.Children = append(parent.Children[:i+1], append([]*BTreeNode{newNode}, parent.Children[i+1:]...)...)
 
 	//sad skracujemo levi pun cvor da ima samo levu polovinu kljucva
 	full.Keys = full.Keys[:mid]
 	full.Values = full.Values[:mid]
 	full.Deleted = full.Deleted[:mid]
+	full.Timestamps = full.Timestamps[:mid]
 }
 
 // ---------- DELETE - logicko ----------
