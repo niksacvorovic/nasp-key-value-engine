@@ -1,6 +1,6 @@
 {
-    "MaxMemtableSize": 4,
-    "MemtableNum": 2,
+    "MaxMemtableSize": 10,
+    "MemtableNum": 5,
     "MemtableStruct": "hashMap", 
     "SkipListLevelNum": 5,
 

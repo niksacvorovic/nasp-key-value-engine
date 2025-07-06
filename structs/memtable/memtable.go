@@ -3,6 +3,7 @@ package memtable
 import (
 	"errors"
 
+	"projekat/structs/cursor"
 	"projekat/structs/sstable"
 )
 
@@ -19,12 +20,11 @@ type MemtableInterface interface {
 	Add(ts [16]byte, tombstone bool, key string, value []byte) error
 	Delete(key string) error
 	Get(key string) ([]byte, bool)
-	// PrintData()
-	// LoadFromWAL(file *os.File, offset int64) (int64, error)
 	SetWatermark(index uint32)
 	GetWatermark() uint32
 	Flush() *[]Record
 	IsFull() bool
+	NewCursor() cursor.Cursor
 }
 
 // Greška ukoliko je Memtable popunjen

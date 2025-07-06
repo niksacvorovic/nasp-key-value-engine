@@ -8,12 +8,15 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"projekat/config"
 	"projekat/structs/blockmanager"
 	"projekat/structs/containers"
+	"projekat/structs/cursor"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
 	"projekat/structs/sstable"
@@ -63,12 +66,12 @@ func main() {
 		}
 	case "skipList":
 		for i := 0; i < cfg.MemtableNum; i++ {
-			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
+			// memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 
 	case "BStablo":
 		for i := 0; i < cfg.MemtableNum; i++ {
-			memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
+			// memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
 		}
 	}
 
@@ -398,12 +401,85 @@ func main() {
 		// --------------------------------------------------------------------------------------------------------------------------
 
 		case "RANGE_SCAN":
-			if len(parts) != 3 {
-				fmt.Println("Greska: RANGE_SCAN zahteva <range> <pageNumber> <pageSize>")
+			if len(parts) != 5 {
+				fmt.Println("Usage: RANGE_SCAN <minKey> <maxKey> <pageNumber> <pageSize>")
 				continue
 			}
 
-			// RANGE_SCAN logika
+			minKey := parts[1]
+			maxKey := parts[2]
+			pageNum, err1 := strconv.Atoi(parts[3])
+			pageSize, err2 := strconv.Atoi(parts[4])
+
+			if err1 != nil || err2 != nil || pageNum < 1 || pageSize < 1 {
+				fmt.Println("Nevalidan broj ili velicina stranica.")
+				continue
+			}
+
+			// Napravi cursore za sve memtabele
+			cursors := make([]cursor.Cursor, 0, len(memtableInstances))
+			for _, mt := range memtableInstances {
+				cursors = append(cursors, mt.NewCursor())
+			}
+
+			// Napravi jedan multi cursor kao wrapper svih cursora
+			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
+			defer mc.Close()
+
+			// Prikupi sve zapise
+			records := make(map[string]struct {
+				value []byte
+				ts    [16]byte
+			})
+
+			for mc.Next() {
+				key := mc.Key()
+				if key == "" {
+					continue
+				}
+
+				// Preskoci ako je izbrisano
+				if mc.Tombstone() {
+					delete(records, key)
+					continue
+				}
+
+				// Sacuvaj samo najnoviju verziju (treba implementirati)!!!
+				records[key] = struct {
+					value []byte
+					ts    [16]byte
+				}{
+					value: mc.Value(),
+					ts:    mc.Timestamp(),
+				}
+			}
+
+			// Sortiraj kljuceve
+			sortedKeys := make([]string, 0, len(records))
+			for k := range records {
+				if k >= minKey && k <= maxKey {
+					sortedKeys = append(sortedKeys, k)
+				}
+			}
+			sort.Strings(sortedKeys)
+
+			// Paginacija
+			total := len(sortedKeys)
+			start := (pageNum - 1) * pageSize
+			if start >= total {
+				fmt.Printf("Nema zapisa (stranica %d od %d)\n", pageNum, (total+pageSize-1)/pageSize)
+				continue
+			}
+			end := start + pageSize
+			if end > total {
+				end = total
+			}
+
+			// Prikazi rezultate
+			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
+			for _, key := range sortedKeys[start:end] {
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, records[key].value)
+			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// HELP i EXIT komanda

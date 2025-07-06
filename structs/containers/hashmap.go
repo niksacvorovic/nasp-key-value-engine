@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"projekat/structs/cursor"
 	"projekat/structs/memtable"
 )
 
@@ -49,14 +50,6 @@ func (m *HashMapMemtable) Get(key string) ([]byte, bool) {
 	return record.Value, exists
 }
 
-// PrintData ispisuje sve podatke u HashMapMemtable-u
-func (m *HashMapMemtable) PrintData() {
-	fmt.Println("Sadrzaj HashMapMemtable-a:")
-	for key, value := range m.data {
-		fmt.Printf("Kljuc: %s, Vrednost: %s\n", key, value)
-	}
-}
-
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable
 func (m *HashMapMemtable) Flush() *[]memtable.Record {
 	// Sortiramo ključeve
@@ -81,4 +74,89 @@ func (m *HashMapMemtable) SetWatermark(index uint32) {
 
 func (m *HashMapMemtable) GetWatermark() uint32 {
 	return m.watermark
+}
+
+// --------------------------------------------------------------------------------------------------------------------------
+// HashMap cursor
+// --------------------------------------------------------------------------------------------------------------------------
+
+// Hashmap cursor struktura
+type HashMapCursor struct {
+	memtable *HashMapMemtable
+	keys     []string
+	current  int
+}
+
+// NewCursor vraca instancu cursora za HashMap memtabelu
+func (m *HashMapMemtable) NewCursor() cursor.Cursor {
+
+	// Pokupi i sortiraj sve kljuceve unutar memtabele
+	keys := make([]string, 0, len(m.data))
+	for k := range m.data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	return &HashMapCursor{
+		memtable: m,
+		keys:     keys,
+		current:  -1,
+	}
+}
+
+// Seek pronalazi prvi zapis unutar memtabele koji je >= minKey
+func (c *HashMapCursor) Seek(minKey string) bool {
+	if len(c.keys) == 0 {
+		return false
+	}
+
+	// Pronadji prvi kljuc koji je >= minKey
+	c.current = sort.SearchStrings(c.keys, minKey) - 1
+	return c.Next()
+}
+
+// Funkcija za prelazak na sledeci zapis
+func (c *HashMapCursor) Next() bool {
+	if len(c.keys) == 0 {
+		return false
+	}
+
+	c.current++
+	if c.current >= len(c.keys) {
+		return false
+	}
+
+	// Preskoci ako je trenutni kljuc izvan opsega
+	return true
+}
+
+// Getter za kljuc
+func (c *HashMapCursor) Key() string {
+	if c.current < 0 || c.current >= len(c.keys) {
+		return ""
+	}
+	return c.keys[c.current]
+}
+
+// Getter za vrijednost
+func (c *HashMapCursor) Value() []byte {
+	return c.memtable.data[c.keys[c.current]].Value
+}
+
+// Getter za timestamp
+func (c *HashMapCursor) Timestamp() [16]byte {
+	return c.memtable.data[c.keys[c.current]].Timestamp
+}
+
+// Getter za tombstone
+func (c *HashMapCursor) Tombstone() bool {
+	if c.current < 0 || c.current >= len(c.keys) {
+		return false
+	}
+	return c.memtable.data[c.keys[c.current]].Tombstone
+}
+
+// Funckija za oslobadjanje resursa
+func (c *HashMapCursor) Close() {
+	// TODO Close funkcija
 }
