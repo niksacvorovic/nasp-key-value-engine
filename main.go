@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -444,13 +445,28 @@ func main() {
 					continue
 				}
 
-				// Sacuvaj samo najnoviju verziju (treba implementirati)!!!
-				records[key] = struct {
-					value []byte
-					ts    [16]byte
-				}{
-					value: mc.Value(),
-					ts:    mc.Timestamp(),
+				// Sacuvaj samo najnoviju verziju
+				currTS := mc.Timestamp()
+				if existing, ok := records[key]; ok {
+					if bytes.Compare(currTS[:], existing.ts[:]) > 0 {
+						// Novi zapis ima veci timestamp, azuriraj
+						records[key] = struct {
+							value []byte
+							ts    [16]byte
+						}{
+							value: mc.Value(),
+							ts:    currTS,
+						}
+					}
+				} else {
+					// Ne postoji u records, samo dodaj
+					records[key] = struct {
+						value []byte
+						ts    [16]byte
+					}{
+						value: mc.Value(),
+						ts:    currTS,
+					}
 				}
 			}
 

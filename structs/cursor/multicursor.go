@@ -90,7 +90,7 @@ func (mc *MultiCursor) Tombstone() bool {
 	return mc.current.Tombstone()
 }
 
-// Funckija za oslobadjanje resursa
+// Funckija za reset cursora
 func (mc *MultiCursor) Close() {
 	// Pozovi close za svaki cursor
 	for _, c := range mc.cursors {

@@ -156,7 +156,9 @@ func (c *HashMapCursor) Tombstone() bool {
 	return c.memtable.data[c.keys[c.current]].Tombstone
 }
 
-// Funckija za oslobadjanje resursa
+// Funckija za reset cursora
 func (c *HashMapCursor) Close() {
-	// TODO Close funkcija
+	c.memtable = nil
+	c.keys = nil
+	c.current = -1
 }
