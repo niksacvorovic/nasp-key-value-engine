@@ -185,16 +185,6 @@ func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.Bloc
 
 // createMultiFileSSTable kreira SSTable u više fajlova koristeći BlockManager.
 func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, string, error) {
-	bs := blockSize
-	bloom := probabilistic.CreateBF(len(records), 0.01)
-
-	dataBlk := make([]byte, 0, bs)
-	indexBlk := make([]byte, 0, bs)
-	leaves := make([][]byte, 0)
-
-	offset := uint64(0)
-	summaryEntries := make([]SummaryEntry, 0)
-
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, "", err
 	}
@@ -205,67 +195,45 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		return nil, "", err
 	}
 	sst := NewMultiFileSSTable(sstDir, timestamp)
-	dataBlockIndex := 0
-	indexBlockIndex := 0
+
+	bloom := probabilistic.CreateBF(len(records), 0.01)
+	leaves := make([][]byte, 0)
+	summaryEntries := make([]SummaryEntry, 0)
+
+	dataBuf := &bytes.Buffer{}
+	indexBuf := &bytes.Buffer{}
+
 	for i, rec := range records {
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
 		rb := recordBytes(rec)
 
-		if len(dataBlk)+len(rb) > bs {
-			pad := make([]byte, bs-len(dataBlk))
-			dataBlk = append(dataBlk, pad...)
-			bm.Block_idx = dataBlockIndex
-			if err := bm.WriteBlock(sst.DataFilePath, dataBlk); err != nil {
-				return nil, "", err
-			}
-			dataBlockIndex++
-			h := md5.Sum(dataBlk)
-			leaves = append(leaves, h[:])
-			dataBlk = make([]byte, 0, bs)
-		}
-		dataBlk = append(dataBlk, rb...)
+		// Zapis u dataBuf
+		offsetNow := uint64(dataBuf.Len())
+		dataBuf.Write(rb)
 
-		idxEntry := make([]byte, 0, 8+len(rec.Key)+8)
-		idxEntry = binary.LittleEndian.AppendUint64(idxEntry, rec.KeySize)
-		idxEntry = append(idxEntry, rec.Key...)
-		idxEntry = binary.LittleEndian.AppendUint64(idxEntry, offset)
-		if len(indexBlk)+len(idxEntry) > bs {
-			pad := make([]byte, bs-len(indexBlk))
-			indexBlk = append(indexBlk, pad...)
-			bm.Block_idx = indexBlockIndex
-			if err := bm.WriteBlock(sst.IndexFilePath, indexBlk); err != nil {
-				return nil, "", err
-			}
-			indexBlockIndex++
-			indexBlk = make([]byte, 0, bs)
-		}
-		indexBlk = append(indexBlk, idxEntry...)
+		// Zapis u indexBuf
+		binary.Write(indexBuf, binary.LittleEndian, rec.KeySize)
+		indexBuf.Write(rec.Key)
+		binary.Write(indexBuf, binary.LittleEndian, offsetNow)
 
+		// Bloom filter i Merkle hash
 		bloom.AddElement(string(rec.Key))
-		if i%step == 0 {
-			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: offset})
-		}
-		offset += uint64(len(rb))
-	}
-
-	if len(dataBlk) > 0 {
-		pad := make([]byte, bs-len(dataBlk))
-		dataBlk = append(dataBlk, pad...)
-		bm.Block_idx = dataBlockIndex
-		_ = bm.WriteBlock(sst.DataFilePath, dataBlk)
-		h := md5.Sum(dataBlk)
+		h := md5.Sum(rb)
 		leaves = append(leaves, h[:])
-	}
-	if len(indexBlk) > 0 {
-		bm.Block_idx = 0
-		pad := make([]byte, bs-len(indexBlk))
-		bm.Block_idx = indexBlockIndex
-		indexBlk = append(indexBlk, pad...)
-		_ = bm.WriteBlock(sst.IndexFilePath, indexBlk)
+
+		// Summary
+		if i%step == 0 {
+			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: offsetNow})
+		}
 	}
 
+	// Zapis data i index
+	_ = writeBlocks(bm, sst.DataFilePath, dataBuf.Bytes(), blockSize)
+	_ = writeBlocks(bm, sst.IndexFilePath, indexBuf.Bytes(), blockSize)
+
+	// Summary
 	sum := make([]byte, 0)
 	sum = append(sum, lsm)
 	minK := records[0].Key
@@ -282,8 +250,10 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	}
 	_ = writeBlocks(bm, sst.SummaryFilePath, sum, blockSize)
 
+	// Filter
 	_ = writeBlocks(bm, sst.FilterFilePath, bloom.Serialize(), blockSize)
 
+	// Merkle
 	leavesBytes := make([]byte, 0, len(leaves)*16)
 	for _, h := range leaves {
 		leavesBytes = append(leavesBytes, h...)
