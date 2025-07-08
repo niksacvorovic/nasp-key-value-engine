@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math/rand"
 
+	"projekat/structs/cursor"
 	"projekat/structs/memtable"
 )
 
@@ -238,3 +239,74 @@ func (m *SkipListMemtable) GetWatermark() uint32 {
 // --------------------------------------------------------------------------------------------------------------------------
 // SkipList cursor
 // --------------------------------------------------------------------------------------------------------------------------
+
+// SkipList cursor struktura
+type SkipListCursor struct {
+	head    *Node // pocetni node
+	current *Node // Trenutni node
+}
+
+// NewCursor pravi cursor koji poceinje na donjem nivou
+func (m *SkipListMemtable) NewCursor() cursor.Cursor {
+	bottomHead := &m.data.levels[0]
+	return &SkipListCursor{
+		head:    bottomHead,
+		current: bottomHead,
+	}
+}
+
+// Seek pozicionira cursor na prvi element koji je >= minKey
+func (c *SkipListCursor) Seek(minKey string) bool {
+	c.current = c.head
+	for c.current.Next != nil && c.current.Next.Record.Key < minKey {
+		c.current = c.current.Next
+	}
+	return c.Next()
+}
+
+// Next pomjera kursor na sledeci element u donjem nivou
+func (c *SkipListCursor) Next() bool {
+	if c.current == nil {
+		return false
+	}
+	c.current = c.current.Next
+	return c.current != nil
+}
+
+// Getter za key
+func (c *SkipListCursor) Key() string {
+	if c.current == nil {
+		return ""
+	}
+	return c.current.Record.Key
+}
+
+// Getter za value
+func (c *SkipListCursor) Value() []byte {
+	if c.current == nil {
+		return nil
+	}
+	return c.current.Record.Value
+}
+
+// Getter za timestamp
+func (c *SkipListCursor) Timestamp() [16]byte {
+	if c.current == nil {
+		return [16]byte{}
+	}
+	return c.current.Record.Timestamp
+}
+
+// Getter za tombstone
+func (c *SkipListCursor) Tombstone() bool {
+	if c.current == nil {
+		return false
+	}
+	return c.current.Record.Tombstone
+}
+
+// Funckija za reset cursora
+func (c *SkipListCursor) Close() {
+	c.head = nil
+	c.current = nil
+}
