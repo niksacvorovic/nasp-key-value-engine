@@ -2,6 +2,7 @@ package containers
 
 import (
 	"errors"
+	"projekat/structs/memtable"
 	//"projekat/structs/memtable"
 )
 
@@ -251,4 +252,32 @@ func (t *BTree) markAsDeleted(node *BTreeNode, key string) error {
 		return errors.New("Key not found")
 	}
 	return t.markAsDeleted(node.Children[i], key)
+}
+
+// InOrderTraversal vraca sve zapise sortirano
+func (t *BTree) InOrderTraversal() []memtable.Record {
+	records := make([]memtable.Record, 0)
+	t.inOrder(t.Root, &records)
+	return records
+}
+
+// inOrder je pomocna funkcija za InOrderTraversal i ona obilazi stablo i dodaje zapise u records
+func (t *BTree) inOrder(node *BTreeNode, records *[]memtable.Record) {
+	if node == nil {
+		return
+	}
+	for i := 0; i < len(node.Keys); i++ {
+		if !node.IsLeaf {
+			t.inOrder(node.Children[i], records)
+		}
+		*records = append(*records, memtable.Record{
+			Key:       node.Keys[i],
+			Value:     node.Values[i],
+			Timestamp: node.Timestamps[i],
+			Tombstone: node.Deleted[i],
+		})
+	}
+	if !node.IsLeaf && len(node.Children) > len(node.Keys) {
+		t.inOrder(node.Children[len(node.Children)-1], records)
+	}
 }

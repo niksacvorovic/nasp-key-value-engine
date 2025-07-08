@@ -264,7 +264,7 @@ func (c *SkipListCursor) Seek(minKey string) bool {
 	return c.Next()
 }
 
-// Next pomjera kursor na sledeci element u donjem nivou
+// Next pomjera cursor na sledeci element u donjem nivou
 func (c *SkipListCursor) Next() bool {
 	if c.current == nil {
 		return false

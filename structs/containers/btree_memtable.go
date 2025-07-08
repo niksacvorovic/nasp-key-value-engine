@@ -2,6 +2,7 @@ package containers
 
 import (
 	//"errors"
+	"projekat/structs/cursor"
 	"projekat/structs/memtable"
 )
 
@@ -101,3 +102,92 @@ func (m *BTreeMemtable) IsFull() bool {
 // --------------------------------------------------------------------------------------------------------------------------
 // BTree cursor
 // --------------------------------------------------------------------------------------------------------------------------
+
+// BTree cursor struktura
+type BTreeCursor struct {
+	records []memtable.Record // Zapisi
+	current int               // Trenutni
+}
+
+// NewCursor pravi cursor sa svim zapisima sortiranim
+func (m *BTreeMemtable) NewCursor() cursor.Cursor {
+	records := m.tree.InOrderTraversal()
+	return &BTreeCursor{
+		records: records,
+		current: -1,
+	}
+}
+
+// Seek pozicionira cursor na prvi kljuc koji je >= minKey
+func (c *BTreeCursor) Seek(minKey string) bool {
+	// Binarna pretraga za prvi kljuc koji je >= minKey
+	left, right := 0, len(c.records)
+	for left < right {
+		mid := left + (right-left)/2
+		if c.records[mid].Key < minKey {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+	if left < len(c.records) {
+		c.current = left
+		return true
+	}
+
+	// Nije pronadjen kljuc koji je >= minKey
+	c.current = len(c.records)
+	return false
+}
+
+// Next pomjera cursor na sledeci element
+func (c *BTreeCursor) Next() bool {
+	if c.current < 0 {
+		if len(c.records) == 0 {
+			return false
+		}
+		c.current = 0
+		return true
+	}
+
+	c.current++
+	return c.current < len(c.records)
+}
+
+// Getter za key
+func (c *BTreeCursor) Key() string {
+	if c.current < 0 || c.current >= len(c.records) {
+		return ""
+	}
+	return c.records[c.current].Key
+}
+
+// Getter za value
+func (c *BTreeCursor) Value() []byte {
+	if c.current < 0 || c.current >= len(c.records) {
+		return nil
+	}
+	return c.records[c.current].Value
+}
+
+// Getter za timestamp
+func (c *BTreeCursor) Timestamp() [16]byte {
+	if c.current < 0 || c.current >= len(c.records) {
+		return [16]byte{}
+	}
+	return c.records[c.current].Timestamp
+}
+
+// Getter za tombstone
+func (c *BTreeCursor) Tombstone() bool {
+	if c.current < 0 || c.current >= len(c.records) {
+		return false
+	}
+	return c.records[c.current].Tombstone
+}
+
+// Funckija za reset cursora
+func (c *BTreeCursor) Close() {
+	c.records = nil
+	c.current = -1
+}
