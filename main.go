@@ -67,12 +67,12 @@ func main() {
 		}
 	case "skipList":
 		for i := 0; i < cfg.MemtableNum; i++ {
-			// memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
+			memtableInstances[i] = containers.NewSkipListMemtable(cfg.SkipListLevelNum, cfg.MaxMemtableSize)
 		}
 
 	case "BStablo":
 		for i := 0; i < cfg.MemtableNum; i++ {
-			// memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
+			memtableInstances[i] = containers.NewBTreeMemtable(cfg.MaxMemtableSize)
 		}
 	}
 
