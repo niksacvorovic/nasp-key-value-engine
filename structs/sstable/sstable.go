@@ -561,18 +561,18 @@ func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 }
 
 // Search sprovodi standardni Bloom → Summary → Index → Data redosled.
-func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int) (*Record, error) {
+func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int) (*Record, int, error) {
 	if !sst.Filter.IsAdded(string(key)) {
-		return nil, fmt.Errorf("key not found (Bloom filter)")
+		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
 	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
-		return nil, fmt.Errorf("key outside summary range")
+		return nil, 0, fmt.Errorf("key outside summary range")
 	}
 
 	idxOff := FindIndexBlockOffset(summary, key)
 	indices, err := ReadIndexBlock(bm, sst.IndexFilePath, idxBlkSize, idxOff, blockSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var dataOff uint64
@@ -585,10 +585,10 @@ func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Sum
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("key not found in index")
+		return nil, 0, fmt.Errorf("key not found in index")
 	}
-	read, _, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
-	return read, err
+	read, offset, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
+	return read, int(dataOff) + offset, err
 }
 
 // parseHeader čita header iz SSTable fajla i vraća offsete za Summary, Index,
@@ -717,30 +717,30 @@ func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexO
 }
 
 // SearchSingleFile sprovodi standardni Bloom → Summary → Index → Data redosled za SSTable u jednom fajlu.
-func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int) (*Record, error) {
+func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int) (*Record, int, error) {
 	offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	filter, err := LoadBloomFilterSingleFile(bm, sst.SingleFilePath, blockSize, offsets[3], offsets[4])
 	if err != nil || !filter.IsAdded(string(key)) {
-		return nil, fmt.Errorf("key not found (Bloom filter)")
+		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
 
 	summary, err := LoadSummarySingleFile(bm, sst.SingleFilePath, blockSize, offsets[2], offsets[3])
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
-		return nil, fmt.Errorf("key outside summary range")
+		return nil, 0, fmt.Errorf("key outside summary range")
 	}
 
 	idxOff := FindIndexBlockOffset(summary, key)
 	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, offsets[1]+idxOff, blockSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	var dataOff uint64
@@ -753,10 +753,10 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("key not found in index")
+		return nil, 0, fmt.Errorf("key not found in index")
 	}
-	rec, _, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize)
-	return rec, err
+	rec, offset, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize)
+	return rec, int(dataOff) + offset, err
 }
 
 // SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
@@ -773,7 +773,7 @@ func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockMan
 		sst = NewSingleFileSSTable(filepath.Dir(dir), ts)
 		sst.SingleFilePath = filepath.Join(dir, fmt.Sprintf("%d-SSTable.db", ts))
 
-		record, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize)
+		record, _, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize)
 		if err == nil {
 			return record, true
 		}
@@ -794,7 +794,7 @@ func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockMan
 		sst.Filter = bloom
 
 		// Pretrazi po kljucu
-		record, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize)
+		record, _, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize)
 		if err == nil {
 			return record, true
 		}
