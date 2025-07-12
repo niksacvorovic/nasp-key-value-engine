@@ -57,7 +57,7 @@ func readSummaryFromTable(sst *SSTable, bm *blockmanager.BlockManager, blockSize
 }
 
 func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
-	dir string, step int, single bool, lsm byte) (*SSTable, string, error) {
+	dir string, step int, single bool, lsm byte, compress bool, dict *Dictionary) (*SSTable, string, error) {
 
 	recordMatrix := make([][]*Record, len(tables))
 	// Učitavanje svih Summary-ja
@@ -82,7 +82,7 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 			path = tables[i].DataFilePath
 		}
 		for {
-			record, length, err := ReadRecordAtOffset(bm, path, offset, blockSize)
+			record, length, err := ReadRecordAtOffset(bm, path, offset, blockSize, compress, dict)
 			if err != nil {
 				return nil, "", err
 			}
@@ -129,7 +129,7 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 		}
 		sortedRecords = append(sortedRecords, *nextRecord)
 	}
-	compacted, sstDir, err := CreateSSTable(sortedRecords, dir, step, bm, blockSize, lsm, single)
+	compacted, sstDir, err := CreateSSTable(sortedRecords, dir, step, bm, blockSize, lsm, single, compress, dict)
 	if err != nil {
 		return nil, "", err
 	}
@@ -187,7 +187,7 @@ func CheckLSMLevels(bm *blockmanager.BlockManager, dirPath string, blockSize int
 }
 
 func SizeTieredCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, dirPath string,
-	maxInLevel int, blockSize int, step int, single bool) error {
+	maxInLevel int, blockSize int, step int, single bool, compression bool, dict *Dictionary) error {
 	loop := true
 	for loop {
 		loop = false
@@ -202,7 +202,7 @@ func SizeTieredCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string,
 					}
 					tables = append(tables, table)
 				}
-				_, sstDir, err := Compaction(tables, blockSize, bm, dirPath, step, single, k+1)
+				_, sstDir, err := Compaction(tables, blockSize, bm, dirPath, step, single, k+1, compression, dict)
 				if err != nil {
 					return err
 				}
@@ -268,7 +268,7 @@ func moveToLowerLevel(levelDir string, bm *blockmanager.BlockManager, blockSize 
 }
 
 func LeveledCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, dirPath string,
-	maxInLevel int, blockSize int, step int, single bool) error {
+	maxInLevel int, blockSize int, step int, single bool, compression bool, dict *Dictionary) error {
 	loop := true
 	for loop {
 		loop = false
@@ -328,7 +328,7 @@ func LeveledCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, di
 						(*lsm)[k+1] = append((*lsm)[k+1], compactedDirs[0])
 						// Opsezi se poklapaju - kompaktujemo sve pohvatane table
 					} else {
-						_, newPath, err := Compaction(tables, blockSize, bm, dirPath, step, single, k+1)
+						_, newPath, err := Compaction(tables, blockSize, bm, dirPath, step, single, k+1, compression, dict)
 						if err != nil {
 							return err
 						}

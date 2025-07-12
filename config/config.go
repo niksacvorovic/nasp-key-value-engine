@@ -22,8 +22,9 @@ type Config struct {
 	WalBlocksPerSegment     int `json:"WalBlocksPerSegment"`
 
 	// SSTable
-	SummaryStep       int  `json:"SummaryStep"`
-	SSTableSingleFile bool `json:"SSTableSingleFile"`
+	SummaryStep        int  `json:"SummaryStep"`
+	SSTableSingleFile  bool `json:"SSTableSingleFile"`
+	SSTableCompression bool `json:"SSTableCompression"`
 
 	// Compactions
 	CompactionAlgorithm string `json:"CompactionAlgorithm"`

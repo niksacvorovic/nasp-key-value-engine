@@ -16,6 +16,7 @@
 
     "SummaryStep": 4,
     "SSTableSingleFile": true,
+    "SSTableCompression": true,
 
     "CompactionAlgorithm":"SizeTiered",
     "MaxCountInLevel":2

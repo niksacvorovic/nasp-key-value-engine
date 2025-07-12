@@ -148,22 +148,70 @@ func calculateCRC(record Record) uint32 {
 	return crc32.ChecksumIEEE(buffer.Bytes())
 }
 
-// recordBytes serijalizuje Record u binarni format identičan WAL zapisu.
-func recordBytes(r Record) []byte {
-	body := make([]byte, 0, 37+len(r.Key)+len(r.Value))
-	body = append(body, r.Timestamp[:]...)
-	if r.Tombstone {
-		body = append(body, 1)
-	} else {
-		body = append(body, 0)
+// WriteUvarint upisuje uint64 vrednost koristeci varijabilni enkoding
+func WriteUvarint(buf *bytes.Buffer, val uint64) {
+	b := make([]byte, binary.MaxVarintLen64)
+	n := binary.PutUvarint(b, val)
+	buf.Write(b[:n])
+}
+
+// ReadUvarint cita uint64 vrednost sa varijabilnim enkodingom
+func ReadUvarint(r io.ByteReader) (uint64, error) {
+	val, err := binary.ReadUvarint(r)
+	if err != nil {
+		return 0, errors.New("failed to read uvarint: " + err.Error())
 	}
-	body = binary.LittleEndian.AppendUint64(body, r.KeySize)
-	body = binary.LittleEndian.AppendUint64(body, r.ValueSize)
-	body = append(body, r.Key...)
-	body = append(body, r.Value...)
-	r.CRC = crc32.ChecksumIEEE(body)
-	out := binary.LittleEndian.AppendUint32([]byte{}, r.CRC)
-	return append(out, body...)
+	return val, nil
+}
+
+// recordBytes serijalizuje Record u binarni format identičan WAL zapisu.
+func recordBytes(r Record, keyId uint64, compress bool) []byte {
+	buf := &bytes.Buffer{}
+
+	if compress {
+		// Rezerviši prostor za CRC (4B)
+		buf.Write(make([]byte, 4))
+
+		// Timestamp (16B)
+		buf.Write(r.Timestamp[:])
+
+		// Tombstone (1B)
+		if r.Tombstone {
+			buf.WriteByte(1)
+			WriteUvarint(buf, keyId) // Samo ID ključa
+		} else {
+			buf.WriteByte(0)
+			WriteUvarint(buf, keyId)                // ID ključa
+			WriteUvarint(buf, uint64(len(r.Value))) // Varint dužina vrednosti
+			buf.Write(r.Value)                      // Vrednost
+		}
+
+		// Računanje i upis CRC
+		data := buf.Bytes()
+		crc := crc32.ChecksumIEEE(data[4:]) // Bez CRC polja
+		binary.LittleEndian.PutUint32(data[0:4], crc)
+		return data
+
+	} else {
+		// Ne-kompresovani slučaj
+		r.KeySize = uint64(len(r.Key))
+		r.ValueSize = uint64(len(r.Value))
+
+		buf.Write(r.Timestamp[:])
+		if r.Tombstone {
+			buf.WriteByte(1)
+		} else {
+			buf.WriteByte(0)
+		}
+		binary.Write(buf, binary.LittleEndian, r.KeySize)
+		binary.Write(buf, binary.LittleEndian, r.ValueSize)
+		buf.Write(r.Key)
+		buf.Write(r.Value)
+
+		r.CRC = crc32.ChecksumIEEE(buf.Bytes())
+		out := binary.LittleEndian.AppendUint32([]byte{}, r.CRC)
+		return append(out, buf.Bytes()...)
+	}
 }
 
 // CreateSSTable formira Data, Index, Summary, Filter i Metadata fajlove.
@@ -172,19 +220,19 @@ func recordBytes(r Record) []byte {
 // - step     : razmak (u broju zapisa) između dva unosa u Summary-ju
 // - bm       : globalni BlockManager
 // Funkcija vraća *SSTable sa popunjenim BloomFilter-om i MerkleTree-om.
-func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, singleFile bool) (*SSTable, string, error) {
+func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, singleFile bool, compress bool, dict *Dictionary) (*SSTable, string, error) {
 	if len(records) == 0 {
 		return nil, "", errors.New("no records to create SSTable")
 	}
 
 	if singleFile {
-		return createSingleFileSSTable(records, dir, step, bm, blockSize, lsm)
+		return createSingleFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict)
 	}
-	return createMultiFileSSTable(records, dir, step, bm, blockSize, lsm)
+	return createMultiFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict)
 }
 
 // createMultiFileSSTable kreira SSTable u više fajlova koristeći BlockManager.
-func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, string, error) {
+func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, compress bool, dict *Dictionary) (*SSTable, string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, "", err
 	}
@@ -207,7 +255,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
-		rb := recordBytes(rec)
+		rb := recordBytes(rec, dict.GetID(string(rec.Key)), compress)
 
 		// Zapis u dataBuf
 		offsetNow := uint64(dataBuf.Len())
@@ -268,7 +316,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 }
 
 // createSingleFileSSTable kreira SSTable u jednom fajlu koristeci BlockManager.
-func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte) (*SSTable, string, error) {
+func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, compress bool, dict *Dictionary) (*SSTable, string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, "", err
 	}
@@ -290,7 +338,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
-		rb := recordBytes(rec)
+		rb := recordBytes(rec, dict.GetID(string(rec.Key)), compress)
 		dataBuf.Write(rb)
 		h := md5.Sum(rb)
 		leaves = append(leaves, h[:])
@@ -306,7 +354,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		binary.Write(indexBuf, binary.LittleEndian, rec.KeySize)
 		indexBuf.Write(rec.Key)
 		binary.Write(indexBuf, binary.LittleEndian, offset)
-		offset += uint64(len(recordBytes(rec)))
+		offset += uint64(len(recordBytes(rec, dict.GetID(string(rec.Key)), compress)))
 	}
 	offsetMap[1] = sstOffset
 	sstOffset += int64(indexBuf.Len())
@@ -328,7 +376,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		summaryBuf.Write(rec.Key)
 		off := uint64(0)
 		for j := 0; j < i; j++ {
-			off += uint64(len(recordBytes(records[j])))
+			off += uint64(len(recordBytes(records[j], dict.GetID(string(records[j].Key)), compress)))
 		}
 		binary.Write(summaryBuf, binary.LittleEndian, off)
 	}
@@ -372,33 +420,85 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 }
 
 // ReadRecordAtOffset čita kompletan Record iz Data fajla počevši od zadatog offseta.
-func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, blockSize int) (*Record, int, error) {
-	// prvo učitamo fiksni header (CRC+meta = 37 B)
-	header, err := readSegment(bm, path, offs, 37, blockSize)
-	if err != nil {
-		return nil, 0, err
-	}
-	rdr := bytes.NewReader(header)
+func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+	if compress {
+		header, err := readSegment(bm, path, offs, 21, blockSize) // CRC (4) + TS (16) + tomb (1)
+		if err != nil {
+			return nil, 0, err
+		}
+		rdr := bytes.NewReader(header)
+		rec := &Record{}
+		binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+		rdr.Read(rec.Timestamp[:])
+		tomb, _ := rdr.ReadByte()
+		rec.Tombstone = tomb == 1
 
-	rec := &Record{}
-	binary.Read(rdr, binary.LittleEndian, &rec.CRC)
-	rdr.Read(rec.Timestamp[:])
-	binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
-	binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
-	binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
+		offset := offs + 21
 
-	total := 37 + int(rec.KeySize) + int(rec.ValueSize)
-	full, err := readSegment(bm, path, offs, total, blockSize)
-	if err != nil {
-		return nil, total, err
-	}
-	rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
-	rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
+		// Učitaj ostatak zapisa
+		if rec.Tombstone {
+			// Samo ID
+			buf, _ := readSegment(bm, path, offset, 10, blockSize)
+			r := bytes.NewReader(buf)
+			keyId, _ := ReadUvarint(r)
+			keyStr, err := dict.Lookup(keyId)
+			if err != nil {
+				return nil, 0, err
+			}
+			rec.Key = []byte(keyStr)
+			totalLen := int(rdr.Size()) + r.Len()
+			return rec, totalLen, nil
+		} else {
+			buf, _ := readSegment(bm, path, offset, 20, blockSize)
+			r := bytes.NewReader(buf)
+			keyId, _ := ReadUvarint(r)
+			valSize, _ := ReadUvarint(r)
+			valStart := offset + int64(r.Size()) - int64(r.Len())
+			val, err := readSegment(bm, path, valStart, int(valSize), blockSize)
+			if err != nil {
+				return nil, 0, err
+			}
+			rec.Value = val
+			keyStr, err := dict.Lookup(keyId)
+			if err != nil {
+				return nil, 0, err
+			}
+			rec.Key = []byte(keyStr)
+			total := int(valStart + int64(valSize) - offs)
+			// CRC provera
+			if calculateCRC(*rec) != rec.CRC {
+				return nil, total, errors.New("CRC mismatch – corrupted record")
+			}
+			return rec, total, nil
+		}
+	} else {
+		// NE-kompresovani deo (ostaje isti)
+		header, err := readSegment(bm, path, offs, 37, blockSize)
+		if err != nil {
+			return nil, 0, err
+		}
+		rdr := bytes.NewReader(header)
 
-	if calculateCRC(*rec) != rec.CRC {
-		return nil, total, errors.New("CRC mismatch – corrupted record")
+		rec := &Record{}
+		binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+		rdr.Read(rec.Timestamp[:])
+		binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
+		binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
+		binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
+
+		total := 37 + int(rec.KeySize) + int(rec.ValueSize)
+		full, err := readSegment(bm, path, offs, total, blockSize)
+		if err != nil {
+			return nil, total, err
+		}
+		rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
+		rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
+
+		if calculateCRC(*rec) != rec.CRC {
+			return nil, total, errors.New("CRC mismatch – corrupted record")
+		}
+		return rec, total, nil
 	}
-	return rec, total, nil
 }
 
 // ReadIndexBlock čita jedan blok (fixed size) iz Index fajla i parsira sve unose.
@@ -561,7 +661,7 @@ func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 }
 
 // Search sprovodi standardni Bloom → Summary → Index → Data redosled.
-func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int) (*Record, int, error) {
+func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
 	if !sst.Filter.IsAdded(string(key)) {
 		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
@@ -587,7 +687,7 @@ func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Sum
 	if !found {
 		return nil, 0, fmt.Errorf("key not found in index")
 	}
-	read, offset, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize)
+	read, offset, err := ReadRecordAtOffset(bm, sst.DataFilePath, int64(dataOff), blockSize, compress, dict)
 	return read, int(dataOff) + offset, err
 }
 
@@ -664,30 +764,86 @@ func LoadMerkleTreeSingleFile(bm *blockmanager.BlockManager, path string, blockS
 }
 
 // ReadRecordAtOffsetSingleFile čita Record iz jednog SSTable fajla na osnovu offseta.
-func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, offset int64, blockSize int) (*Record, int, error) {
-	header, err := readSegment(bm, path, offset, 37, blockSize)
-	if err != nil {
-		return nil, 0, err
-	}
-	rdr := bytes.NewReader(header)
-	rec := &Record{}
-	binary.Read(rdr, binary.LittleEndian, &rec.CRC)
-	rdr.Read(rec.Timestamp[:])
-	binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
-	binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
-	binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
-	total := 37 + int(rec.KeySize) + int(rec.ValueSize)
-	full, err := readSegment(bm, path, offset, total, blockSize)
-	if err != nil {
-		return nil, total, err
-	}
-	rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
-	rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
+func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, offset int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+	if compress {
+		// Čitamo CRC (4) + Timestamp (16) + Tombstone (1)
+		header, err := readSegment(bm, path, offset, 21, blockSize)
+		if err != nil {
+			return nil, 0, err
+		}
+		rdr := bytes.NewReader(header)
+		rec := &Record{}
+		binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+		rdr.Read(rec.Timestamp[:])
+		tomb, _ := rdr.ReadByte()
+		rec.Tombstone = tomb == 1
 
-	if calculateCRC(*rec) != rec.CRC {
-		return nil, total, errors.New("CRC mismatch – corrupted record")
+		currOffset := offset + 21
+
+		if rec.Tombstone {
+			// Samo ID ključa
+			buf, _ := readSegment(bm, path, currOffset, 10, blockSize)
+			r := bytes.NewReader(buf)
+			keyId, _ := ReadUvarint(r)
+			keyStr, err := dict.Lookup(keyId)
+			if err != nil {
+				return nil, 0, err
+			}
+			rec.Key = []byte(keyStr)
+			totalLen := int(rdr.Size()) + r.Len()
+			return rec, totalLen, nil
+		} else {
+			// ID + ValueSize + Value
+			buf, _ := readSegment(bm, path, currOffset, 20, blockSize)
+			r := bytes.NewReader(buf)
+			keyId, _ := ReadUvarint(r)
+			valSize, _ := ReadUvarint(r)
+			valStart := currOffset + int64(r.Size()) - int64(r.Len())
+			val, err := readSegment(bm, path, valStart, int(valSize), blockSize)
+			if err != nil {
+				return nil, 0, err
+			}
+			keyStr, err := dict.Lookup(keyId)
+			if err != nil {
+				return nil, 0, err
+			}
+			rec.Key = []byte(keyStr)
+			rec.Value = val
+
+			// CRC provera
+			if calculateCRC(*rec) != rec.CRC {
+				return nil, int(valStart + int64(len(val)) - offset), errors.New("CRC mismatch – corrupted record")
+			}
+			total := int(valStart + int64(len(val)) - offset)
+			return rec, total, nil
+		}
+	} else {
+		// NE-kompresovani slučaj (isto kao ranije)
+		header, err := readSegment(bm, path, offset, 37, blockSize)
+		if err != nil {
+			return nil, 0, err
+		}
+		rdr := bytes.NewReader(header)
+		rec := &Record{}
+		binary.Read(rdr, binary.LittleEndian, &rec.CRC)
+		rdr.Read(rec.Timestamp[:])
+		binary.Read(rdr, binary.LittleEndian, &rec.Tombstone)
+		binary.Read(rdr, binary.LittleEndian, &rec.KeySize)
+		binary.Read(rdr, binary.LittleEndian, &rec.ValueSize)
+
+		total := 37 + int(rec.KeySize) + int(rec.ValueSize)
+		full, err := readSegment(bm, path, offset, total, blockSize)
+		if err != nil {
+			return nil, total, err
+		}
+		rec.Key = append([]byte{}, full[37:37+rec.KeySize]...)
+		rec.Value = append(rec.Value, full[37+rec.KeySize:]...)
+
+		if calculateCRC(*rec) != rec.CRC {
+			return nil, total, errors.New("CRC mismatch – corrupted record")
+		}
+		return rec, total, nil
 	}
-	return rec, total, nil
 }
 
 // ReadIndexBlockSingleFile čita Index blok iz fajla u jednom SSTable formatu.
@@ -717,7 +873,7 @@ func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexO
 }
 
 // SearchSingleFile sprovodi standardni Bloom → Summary → Index → Data redosled za SSTable u jednom fajlu.
-func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int) (*Record, int, error) {
+func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
 	offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 	if err != nil {
 		return nil, 0, err
@@ -755,12 +911,12 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 	if !found {
 		return nil, 0, fmt.Errorf("key not found in index")
 	}
-	rec, offset, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize)
+	rec, offset, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize, compress, dict)
 	return rec, int(dataOff) + offset, err
 }
 
 // SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
-func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockManager) (*Record, bool) {
+func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockManager, compress bool, dict *Dictionary) (*Record, bool) {
 	base := filepath.Base(dir)
 	var ts int64
 	if _, err := fmt.Sscanf(base, "%d-sstable", &ts); err != nil {
@@ -773,7 +929,7 @@ func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockMan
 		sst = NewSingleFileSSTable(filepath.Dir(dir), ts)
 		sst.SingleFilePath = filepath.Join(dir, fmt.Sprintf("%d-SSTable.db", ts))
 
-		record, _, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize)
+		record, _, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize, compress, dict)
 		if err == nil {
 			return record, true
 		}
@@ -794,7 +950,7 @@ func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockMan
 		sst.Filter = bloom
 
 		// Pretrazi po kljucu
-		record, _, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize)
+		record, _, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize, compress, dict)
 		if err == nil {
 			return record, true
 		}

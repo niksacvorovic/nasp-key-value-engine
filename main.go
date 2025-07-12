@@ -121,6 +121,9 @@ func main() {
 	// Putanja do foldera sa SSTable fajlovima
 	sstableDir := filepath.Join("data", "sstable")
 
+	// Globalni rečnik za SSTable
+	dict := sstable.NewDictionary()
+
 	// Prebrojavanje SSTabli na svakom nivou LSM stabla
 	var lsm map[byte][]string
 	_, err = os.Stat(sstableDir)
@@ -247,7 +250,7 @@ func main() {
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
 
-						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile)
+						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
 						if err != nil {
 							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 						}
@@ -256,10 +259,10 @@ func main() {
 						switch cfg.CompactionAlgorithm {
 						case "SizeTiered":
 							sstable.SizeTieredCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile)
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
 						case "Leveled":
 							sstable.LeveledCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile)
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
 						}
 					}
 				}
@@ -324,7 +327,7 @@ func main() {
 					}
 
 					for _, dir := range sstableDirs {
-						record, found = sstable.SearchSSTable(dir, key, cfg, bm)
+						record, found = sstable.SearchSSTable(dir, key, cfg, bm, cfg.SSTableCompression, dict)
 
 						if found {
 							// fmt.Println("sstable")
