@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func readTableFromDir(subdirPath string) (*SSTable, error) {
+func ReadTableFromDir(subdirPath string) (*SSTable, error) {
 	files, err := os.ReadDir(subdirPath)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func readTableFromDir(subdirPath string) (*SSTable, error) {
 	return nil, err
 }
 
-func readSummaryFromTable(sst *SSTable, bm *blockmanager.BlockManager, blockSize int) (*Summary, error) {
+func ReadSummaryFromTable(sst *SSTable, bm *blockmanager.BlockManager, blockSize int) (*Summary, error) {
 	var sum Summary
 	var err error = nil
 	if sst.SingleSSTable {
@@ -63,7 +63,7 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 	// Učitavanje svih Summary-ja
 	summaries := make([]*Summary, len(tables))
 	for i := range tables {
-		sum, err := readSummaryFromTable(tables[i], bm, blockSize)
+		sum, err := ReadSummaryFromTable(tables[i], bm, blockSize)
 		if err != nil {
 			return nil, "", err
 		}
@@ -196,7 +196,7 @@ func SizeTieredCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string,
 				tables := make([]*SSTable, 0)
 				loop = true
 				for _, subdirPath := range level {
-					table, err := readTableFromDir(subdirPath)
+					table, err := ReadTableFromDir(subdirPath)
 					if err != nil {
 						return nil
 					}
@@ -285,24 +285,24 @@ func LeveledCompaction(bm *blockmanager.BlockManager, lsm *map[byte][]string, di
 					// Kompakcija ukoliko na sledećem nivou ima tabeli
 					compactedDirs := make([]string, 0)
 					compactedDirs = append(compactedDirs, level[0])
-					uppersst, err := readTableFromDir(level[0])
+					uppersst, err := ReadTableFromDir(level[0])
 					if err != nil {
 						return err
 					}
 					(*lsm)[k] = (*lsm)[k][1:]
 					tables = append(tables, uppersst)
-					upperSummary, err := readSummaryFromTable(uppersst, bm, blockSize)
+					upperSummary, err := ReadSummaryFromTable(uppersst, bm, blockSize)
 					minStr := string(upperSummary.MinKey)
 					maxStr := string(upperSummary.MaxKey)
 					if err != nil {
 						return err
 					}
 					for _, lowerDir := range nextLevel {
-						lowersst, err := readTableFromDir(lowerDir)
+						lowersst, err := ReadTableFromDir(lowerDir)
 						if err != nil {
 							return err
 						}
-						lowerSummary, err := readSummaryFromTable(lowersst, bm, blockSize)
+						lowerSummary, err := ReadSummaryFromTable(lowersst, bm, blockSize)
 						if err != nil {
 							return err
 						}

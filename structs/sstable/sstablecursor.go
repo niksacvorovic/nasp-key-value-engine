@@ -3,44 +3,51 @@ package sstable
 import "projekat/structs/blockmanager"
 
 type SSTableCursor struct {
-	bm        *blockmanager.BlockManager
-	sst       *SSTable
-	current   *Record
-	minKey    string
-	maxKey    string
-	offset    int
-	blockSize int
+	bm          *blockmanager.BlockManager
+	sst         *SSTable
+	current     *Record
+	minKey      string
+	maxKey      string
+	offset      int
+	blockSize   int
+	compression bool
+	dict        *Dictionary
 }
 
-func NewCursor(bm *blockmanager.BlockManager, sst *SSTable, minKey string, maxKey string, blockSize int) (SSTableCursor, error) {
+func NewCursor(bm *blockmanager.BlockManager, sst *SSTable, minKey string, maxKey string, offset int, blockSize int, compression bool, dict *Dictionary) (SSTableCursor, error) {
 
 	return SSTableCursor{
-		bm:        bm,
-		sst:       sst,
-		current:   nil,
-		minKey:    minKey,
-		maxKey:    maxKey,
-		offset:    0,
-		blockSize: blockSize,
+		bm:          bm,
+		sst:         sst,
+		current:     nil,
+		minKey:      minKey,
+		maxKey:      maxKey,
+		offset:      offset,
+		blockSize:   blockSize,
+		compression: compression,
+		dict:        dict,
 	}, nil
 }
 
 func (sc *SSTableCursor) Seek(seekKey string) bool {
+	var offsetDelta int
 	var err error
-	if sc.sst.SingleSSTable {
-		sc.current, sc.offset, err = SearchSingleFile(sc.bm, sc.sst, []byte(sc.minKey), sc.blockSize)
-		if err != nil {
-			return false
-		}
-	} else {
-		summary, err := LoadSummary(sc.bm, sc.sst.SummaryFilePath)
 
-		if err != nil {
-			return false
+	for {
+		if sc.sst.SingleSSTable {
+			sc.current, offsetDelta, err = ReadRecordAtOffsetSingleFile(sc.bm, sc.sst.SingleFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
+			if err != nil {
+				return false
+			}
+		} else {
+			sc.current, offsetDelta, err = ReadRecordAtOffset(sc.bm, sc.sst.DataFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
+			if err != nil {
+				return false
+			}
 		}
-		sc.current, sc.offset, err = Search(sc.bm, sc.sst, []byte(sc.minKey), summary, int64(sc.blockSize), sc.blockSize)
-		if err != nil {
-			return false
+		sc.offset += offsetDelta
+		if string(sc.current.Key) < sc.minKey {
+			break
 		}
 	}
 	return true
@@ -50,12 +57,12 @@ func (sc *SSTableCursor) Next() bool {
 	var offsetDelta int
 	var err error
 	if sc.sst.SingleSSTable {
-		sc.current, offsetDelta, err = ReadRecordAtOffsetSingleFile(sc.bm, sc.sst.SingleFilePath, int64(sc.offset), sc.blockSize)
+		sc.current, offsetDelta, err = ReadRecordAtOffsetSingleFile(sc.bm, sc.sst.SingleFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
 		if err != nil {
 			return false
 		}
 	} else {
-		sc.current, offsetDelta, err = ReadRecordAtOffset(sc.bm, sc.sst.DataFilePath, int64(sc.offset), sc.blockSize)
+		sc.current, offsetDelta, err = ReadRecordAtOffset(sc.bm, sc.sst.DataFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
 		if err != nil {
 			return false
 		}

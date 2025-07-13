@@ -598,6 +598,38 @@ func main() {
 				cursors = append(cursors, mt.NewCursor())
 			}
 
+			// Napravi kursore za sve SSTabele
+			sstableCursors := make([]cursor.Cursor, 0)
+			for _, level := range lsm {
+				for _, path := range level {
+					sst, err := sstable.ReadTableFromDir(path)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
+						continue
+					}
+					var newOffset int
+					for _, entry := range sum.Entries {
+						if string(entry.Key) > minKey {
+							break
+						}
+						newOffset = int(entry.Offset)
+					}
+					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					if err != nil {
+						fmt.Printf("Greška prilikom formiranja kursora...")
+					}
+					sstableCursors = append(sstableCursors, &newCursor)
+				}
+			}
+
+			cursors = append(cursors, sstableCursors...)
+
 			// Napravi jedan multi cursor kao wrapper svih cursora
 			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
 			defer mc.Close()
