@@ -100,7 +100,10 @@ func (bf *BloomFilter) Deserialize(bytes []byte) {
 	k := binary.BigEndian.Uint32(bytes[4+m : 8+m])
 	hasharr := make([]HashWithSeed, k)
 	for i := 0; i < int(k); i++ {
-		hasharr[i] = HashWithSeed{Seed: bytes[8+m+(4*k) : 12+m+(4*k)]}
+		start := int(8 + m + uint32(i)*4)
+		end := start + 4
+		hasharr[i] = HashWithSeed{Seed: bytes[start:end]}
 	}
+
 	bf.hashes = hasharr
 }

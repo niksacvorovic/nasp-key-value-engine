@@ -20,6 +20,7 @@ import (
 	"projekat/structs/cursor"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
+	"projekat/structs/probabilistic"
 	"projekat/structs/sstable"
 	"projekat/structs/wal"
 )
@@ -204,6 +205,11 @@ func main() {
 		switch command {
 		// PUT komanda ocekuje 2 argumenta: key, value
 		case "PUT":
+			if strings.HasPrefix(parts[1], "__sys__prob__") {
+				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				continue
+			}
+
 			// Proverava da li PUT komanda ima tačno 2 argumenta: key i value
 			if len(parts) != 3 {
 				fmt.Println("Greška: PUT zahteva <key> <value>")
@@ -276,6 +282,11 @@ func main() {
 
 		// GET komanda ocekuje 1 argument: key
 		case "GET":
+			if strings.HasPrefix(parts[1], "__sys__prob__") {
+				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				continue
+			}
+
 			if len(parts) != 2 {
 				fmt.Println("Greska: GET zahteva <key>")
 				continue
@@ -348,6 +359,11 @@ func main() {
 
 		// DELETE komanda ocekuje 1 argument: key
 		case "DELETE":
+			if strings.HasPrefix(parts[1], "__sys__prob__") {
+				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				continue
+			}
+
 			if len(parts) != 2 {
 				fmt.Println("Greska: DELETE zahteva <key>")
 				continue
@@ -387,6 +403,162 @@ func main() {
 			} else {
 				fmt.Printf("Kljuc '%s' nije pronadjen.\n", key)
 			}
+
+		// ========== PROBABILISTIC ==========
+
+		case "BLOOM_CREATE":
+			if len(parts) != 4 {
+				fmt.Println("Usage: BLOOM_CREATE <name> <expectedElements> <falsePositiveRate>")
+				continue
+			}
+			name := parts[1]
+			expected, _ := strconv.Atoi(parts[2])
+			fpRate, _ := strconv.ParseFloat(parts[3], 64)
+			bf := probabilistic.CreateBF(expected, fpRate)
+			probabilistic.SaveBloom(name, &bf, memtableInstances[0])
+			fmt.Println("Bloom filter kreiran.")
+
+		case "BLOOM_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Usage: BLOOM_ADD <name> <element>")
+				continue
+			}
+			name := parts[1]
+			elem := parts[2]
+			bf, err := probabilistic.LoadBloom(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			bf.AddElement(elem)
+			probabilistic.SaveBloom(name, bf, memtableInstances[0])
+			fmt.Println("Element dodat u Bloom filter.")
+
+		case "BLOOM_CHECK":
+			if len(parts) != 3 {
+				fmt.Println("Usage: BLOOM_CHECK <name> <element>")
+				continue
+			}
+			name := parts[1]
+			elem := parts[2]
+			bf, err := probabilistic.LoadBloom(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			if bf.IsAdded(elem) {
+				fmt.Println("Element je mozda prisutan.")
+			} else {
+				fmt.Println("Element sigurno nije prisutan.")
+			}
+
+		case "CMS_CREATE":
+			if len(parts) != 4 {
+				fmt.Println("Usage: CMS_CREATE <name> <epsilon> <delta>")
+				continue
+			}
+			name := parts[1]
+			epsilon, _ := strconv.ParseFloat(parts[2], 64)
+			delta, _ := strconv.ParseFloat(parts[3], 64)
+			cms := probabilistic.CreateCountMinSketch(epsilon, delta)
+			probabilistic.SaveCMS(name, &cms, memtableInstances[0])
+			fmt.Println("CMS kreiran.")
+
+		case "CMS_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Usage: CMS_ADD <name> <event>")
+				continue
+			}
+			name := parts[1]
+			event := parts[2]
+			cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			cms.Add(event)
+			probabilistic.SaveCMS(name, cms, memtableInstances[0])
+			fmt.Println("Dogadjaj dodat u CMS.")
+
+		case "CMS_COUNT":
+			if len(parts) != 3 {
+				fmt.Println("Usage: CMS_COUNT <name> <event>")
+				continue
+			}
+			name := parts[1]
+			event := parts[2]
+			cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			count := cms.FindCount(event)
+			fmt.Printf("Broj ponavljanja za %s: %d\n", event, count)
+
+		case "HLL_CREATE":
+			if len(parts) != 3 {
+				fmt.Println("Usage: HLL_CREATE <name> <precision>")
+				continue
+			}
+			name := parts[1]
+			precision, _ := strconv.Atoi(parts[2])
+			hll := probabilistic.CreateHLL(uint8(precision))
+			probabilistic.SaveHLL(name, &hll, memtableInstances[0])
+			fmt.Println("HLL kreiran.")
+
+		case "HLL_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Usage: HLL_ADD <name> <element>")
+				continue
+			}
+			name := parts[1]
+			elem := parts[2]
+			hll, err := probabilistic.LoadHLL(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			hll.Add(elem)
+			probabilistic.SaveHLL(name, hll, memtableInstances[0])
+			fmt.Println("Element dodat u HLL.")
+
+		case "HLL_COUNT":
+			if len(parts) != 2 {
+				fmt.Println("Usage: HLL_COUNT <name>")
+				continue
+			}
+			name := parts[1]
+			hll, err := probabilistic.LoadHLL(name, memtableInstances[0])
+			if err != nil {
+				fmt.Println("Greska:", err)
+				continue
+			}
+			fmt.Println("Kardinalitet:", int(hll.Estimate()))
+
+		case "SIMHASH_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Usage: SIMHASH_ADD <name> <text>")
+				continue
+			}
+			name := parts[1]
+			text := parts[2]
+			weights := probabilistic.GetWordWeights(text)
+			sim := probabilistic.ComputeSimhash(weights)
+			probabilistic.SaveSimhash(name, sim, memtableInstances[0])
+			fmt.Println("Fingerprint sacuvan.")
+
+		case "SIMHASH_DIST":
+			if len(parts) != 3 {
+				fmt.Println("Usage: SIMHASH_DIST <name1> <name2>")
+				continue
+			}
+			s1, err1 := probabilistic.LoadSimhash(parts[1], memtableInstances[0])
+			s2, err2 := probabilistic.LoadSimhash(parts[2], memtableInstances[0])
+			if err1 != nil || err2 != nil {
+				fmt.Println("Greska pri ucitavanju fingerprinta")
+				continue
+			}
+			fmt.Printf("Hamming distanca: %d\n", probabilistic.HammingDistance(s1, s2))
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
