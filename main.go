@@ -170,14 +170,14 @@ func main() {
 		// Kontrola pristupa
 		// Token bucket će se uvek čuvati u prvoj slobodnoj memtabeli pri pokretanju
 		if command == "GET" || command == "PUT" || command == "DELETE" {
-			bucket, ok := memtableInstances[tokenIndex].Get("_TOKEN_BUCKET")
+			bucket, ok := memtableInstances[tokenIndex].Get("__sys__TOKEN_BUCKET")
 			if !ok {
 				newtimestamp := uint64(time.Now().Unix())
 				newtokens := uint8(cfg.TokenRate)
 				newbucket := make([]byte, 0)
 				newbucket = binary.BigEndian.AppendUint64(newbucket, newtimestamp)
 				newbucket = append(newbucket, newtokens)
-				memtableInstances[tokenIndex].Add([16]byte{}, false, "_TOKEN_BUCKET", newbucket)
+				memtableInstances[tokenIndex].Add([16]byte{}, false, "__sys__TOKEN_BUCKET", newbucket)
 				bucket = newbucket
 			}
 			timestamp := binary.BigEndian.Uint64(bucket[0:8])
@@ -195,7 +195,7 @@ func main() {
 				bucket = binary.BigEndian.AppendUint64(bucket, timestamp)
 				bucket = append(bucket, tokens)
 			}
-			memtableInstances[tokenIndex].Add([16]byte{}, false, "_TOKEN_BUCKET", bucket)
+			memtableInstances[tokenIndex].Add([16]byte{}, false, "__sys__TOKEN_BUCKET", bucket)
 		}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -205,7 +205,7 @@ func main() {
 		switch command {
 		// PUT komanda ocekuje 2 argumenta: key, value
 		case "PUT":
-			if strings.HasPrefix(parts[1], "__sys__prob__") {
+			if strings.HasPrefix(parts[1], "__sys__") {
 				fmt.Println("Zabranjena operacija nad internim kljucevima.")
 				continue
 			}
@@ -282,7 +282,7 @@ func main() {
 
 		// GET komanda ocekuje 1 argument: key
 		case "GET":
-			if strings.HasPrefix(parts[1], "__sys__prob__") {
+			if strings.HasPrefix(parts[1], "__sys__") {
 				fmt.Println("Zabranjena operacija nad internim kljucevima.")
 				continue
 			}
@@ -359,7 +359,7 @@ func main() {
 
 		// DELETE komanda ocekuje 1 argument: key
 		case "DELETE":
-			if strings.HasPrefix(parts[1], "__sys__prob__") {
+			if strings.HasPrefix(parts[1], "__sys__") {
 				fmt.Println("Zabranjena operacija nad internim kljucevima.")
 				continue
 			}
