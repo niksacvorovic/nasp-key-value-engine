@@ -220,19 +220,21 @@ func recordBytes(r Record, keyId uint64, compress bool) []byte {
 // - step     : razmak (u broju zapisa) između dva unosa u Summary-ju
 // - bm       : globalni BlockManager
 // Funkcija vraća *SSTable sa popunjenim BloomFilter-om i MerkleTree-om.
-func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, singleFile bool, compress bool, dict *Dictionary) (*SSTable, string, error) {
+func CreateSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int,
+	lsm byte, singleFile bool, compress bool, dict *Dictionary, dictPath string) (*SSTable, string, error) {
 	if len(records) == 0 {
 		return nil, "", errors.New("no records to create SSTable")
 	}
 
 	if singleFile {
-		return createSingleFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict)
+		return createSingleFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict, dictPath)
 	}
-	return createMultiFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict)
+	return createMultiFileSSTable(records, dir, step, bm, blockSize, lsm, compress, dict, dictPath)
 }
 
 // createMultiFileSSTable kreira SSTable u više fajlova koristeći BlockManager.
-func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, compress bool, dict *Dictionary) (*SSTable, string, error) {
+func createMultiFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int,
+	lsm byte, compress bool, dict *Dictionary, dictPath string) (*SSTable, string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, "", err
 	}
@@ -255,7 +257,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
-		rb := recordBytes(rec, dict.GetID(string(rec.Key)), compress)
+		rb := recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)
 
 		// Zapis u dataBuf
 		offsetNow := uint64(dataBuf.Len())
@@ -316,7 +318,8 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 }
 
 // createSingleFileSSTable kreira SSTable u jednom fajlu koristeci BlockManager.
-func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int, lsm byte, compress bool, dict *Dictionary) (*SSTable, string, error) {
+func createSingleFileSSTable(records []Record, dir string, step int, bm *blockmanager.BlockManager, blockSize int,
+	lsm byte, compress bool, dict *Dictionary, dictPath string) (*SSTable, string, error) {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return nil, "", err
 	}
@@ -338,7 +341,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
-		rb := recordBytes(rec, dict.GetID(string(rec.Key)), compress)
+		rb := recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)
 		dataBuf.Write(rb)
 		h := md5.Sum(rb)
 		leaves = append(leaves, h[:])
@@ -354,7 +357,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		binary.Write(indexBuf, binary.LittleEndian, rec.KeySize)
 		indexBuf.Write(rec.Key)
 		binary.Write(indexBuf, binary.LittleEndian, offset)
-		offset += uint64(len(recordBytes(rec, dict.GetID(string(rec.Key)), compress)))
+		offset += uint64(len(recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)))
 	}
 	offsetMap[1] = sstOffset
 	sstOffset += int64(indexBuf.Len())
@@ -376,7 +379,7 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 		summaryBuf.Write(rec.Key)
 		off := uint64(0)
 		for j := 0; j < i; j++ {
-			off += uint64(len(recordBytes(records[j], dict.GetID(string(records[j].Key)), compress)))
+			off += uint64(len(recordBytes(records[j], dict.GetID(string(records[j].Key), bm, dictPath, blockSize), compress)))
 		}
 		binary.Write(summaryBuf, binary.LittleEndian, off)
 	}
@@ -661,7 +664,8 @@ func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 }
 
 // Search sprovodi standardni Bloom → Summary → Index → Data redosled.
-func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary, idxBlkSize int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary,
+	idxBlkSize int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
 	if !sst.Filter.IsAdded(string(key)) {
 		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
@@ -764,7 +768,8 @@ func LoadMerkleTreeSingleFile(bm *blockmanager.BlockManager, path string, blockS
 }
 
 // ReadRecordAtOffsetSingleFile čita Record iz jednog SSTable fajla na osnovu offseta.
-func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, offset int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, offset int64, blockSize int,
+	compress bool, dict *Dictionary) (*Record, int, error) {
 	if compress {
 		// Čitamo CRC (4) + Timestamp (16) + Tombstone (1)
 		header, err := readSegment(bm, path, offset, 21, blockSize)

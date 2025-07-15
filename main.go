@@ -122,8 +122,12 @@ func main() {
 	// Putanja do foldera sa SSTable fajlovima
 	sstableDir := filepath.Join("data", "sstable")
 
+	// Putanja do fajla sa globalnim recnikom kompresije
+	dictPath := filepath.Join("data", "dictionary.db")
+
 	// Globalni rečnik za SSTable
-	dict := sstable.NewDictionary()
+	dict := sstable.NewDictionaryWithThreshold(cfg.BlockSize)
+	_ = dict.LoadFromFile(dictPath, bm, cfg.BlockSize)
 
 	// Prebrojavanje SSTabli na svakom nivou LSM stabla
 	var lsm map[byte][]string
@@ -256,7 +260,7 @@ func main() {
 						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
 
-						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
+						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
 						if err != nil {
 							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 						}
@@ -265,10 +269,10 @@ func main() {
 						switch cfg.CompactionAlgorithm {
 						case "SizeTiered":
 							sstable.SizeTieredCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
 						case "Leveled":
 							sstable.LeveledCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict)
+								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
 						}
 					}
 				}
@@ -717,6 +721,12 @@ func main() {
 
 		case "EXIT":
 			walInstance.WriteOnExit()
+
+			err := dict.ForceSaveToFile(dictPath, bm, cfg.BlockSize)
+			if err != nil {
+				fmt.Printf("Greška pri upisu rečnika: %v\n", err)
+			}
+
 			fmt.Println("Dovidjenja!")
 			return
 

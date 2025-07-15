@@ -6,25 +6,41 @@ import (
 	"errors"
 	"io"
 	"os"
+	"projekat/structs/blockmanager"
 )
 
 type Dictionary struct {
-	strToID map[string]uint64
-	idToStr map[uint64]string
-	nextID  uint64
+	strToID        map[string]uint64
+	idToStr        map[uint64]string
+	nextID         uint64
+	unsavedBuffer  int
+	flushThreshold int
 }
 
-// NewDictionary pravi novi prazan rečnik
+// NewDictionary pravi novi prazan rečnik sa default pragom 100
 func NewDictionary() *Dictionary {
 	return &Dictionary{
-		strToID: make(map[string]uint64),
-		idToStr: make(map[uint64]string),
-		nextID:  1,
+		strToID:        make(map[string]uint64),
+		idToStr:        make(map[uint64]string),
+		nextID:         1,
+		unsavedBuffer:  0,
+		flushThreshold: 100,
 	}
 }
 
-// GetID vraća ID za ključ, kreira novi ako ne postoji
-func (d *Dictionary) GetID(key string) uint64 {
+// NewDictionaryWithThreshold omogućava zadavanje vlastitog praga
+func NewDictionaryWithThreshold(threshold int) *Dictionary {
+	return &Dictionary{
+		strToID:        make(map[string]uint64),
+		idToStr:        make(map[uint64]string),
+		nextID:         1,
+		unsavedBuffer:  0,
+		flushThreshold: threshold,
+	}
+}
+
+// GetID vraća ID za ključ, kreira novi ako ne postoji i automatski čuva kad treba
+func (d *Dictionary) GetID(key string, bm *blockmanager.BlockManager, path string, blockSize int) uint64 {
 	if id, ok := d.strToID[key]; ok {
 		return id
 	}
@@ -32,6 +48,12 @@ func (d *Dictionary) GetID(key string) uint64 {
 	d.nextID++
 	d.strToID[key] = id
 	d.idToStr[id] = key
+	d.unsavedBuffer++
+
+	if d.unsavedBuffer >= d.flushThreshold {
+		_ = d.SaveToFile(path, bm, blockSize)
+		d.unsavedBuffer = 0
+	}
 	return id
 }
 
@@ -44,13 +66,12 @@ func (d *Dictionary) Lookup(id uint64) (string, error) {
 	return val, nil
 }
 
-// SaveToFile serijalizuje rečnik u datoteku
-func (d *Dictionary) SaveToFile(path string) error {
+// SaveToFile serijalizuje rečnik u datoteku koristeći BlockManager
+func (d *Dictionary) SaveToFile(path string, bm *blockmanager.BlockManager, blockSize int) error {
 	buf := &bytes.Buffer{}
+	tmp := make([]byte, binary.MaxVarintLen64)
 
 	for key, id := range d.strToID {
-		tmp := make([]byte, binary.MaxVarintLen64)
-
 		n := binary.PutUvarint(tmp, id)
 		buf.Write(tmp[:n])
 
@@ -59,17 +80,23 @@ func (d *Dictionary) SaveToFile(path string) error {
 
 		buf.Write([]byte(key))
 	}
-
-	return os.WriteFile(path, buf.Bytes(), 0644)
+	return writeBlocks(bm, path, buf.Bytes(), blockSize)
 }
 
-// LoadFromFile deserijalizuje rečnik iz datoteke
-func (d *Dictionary) LoadFromFile(path string) error {
+// LoadFromFile učitava rečnik iz datoteke koristeći BlockManager
+func (d *Dictionary) LoadFromFile(path string, bm *blockmanager.BlockManager, blockSize int) error {
 	d.strToID = make(map[string]uint64)
 	d.idToStr = make(map[uint64]string)
 	d.nextID = 1
+	d.unsavedBuffer = 0
 
-	data, err := os.ReadFile(path)
+	fi, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	size := int(fi.Size())
+
+	data, err := readSegment(bm, path, 0, size, blockSize)
 	if err != nil {
 		return err
 	}
@@ -102,4 +129,10 @@ func (d *Dictionary) LoadFromFile(path string) error {
 		}
 	}
 	return nil
+}
+
+// ForceSaveToFile eksplicitno zapisuje ceo rečnik (npr. pri izlasku iz programa)
+func (d *Dictionary) ForceSaveToFile(path string, bm *blockmanager.BlockManager, blockSize int) error {
+	d.unsavedBuffer = 0
+	return d.SaveToFile(path, bm, blockSize)
 }
