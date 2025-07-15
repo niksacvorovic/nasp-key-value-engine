@@ -569,12 +569,136 @@ func main() {
 		// --------------------------------------------------------------------------------------------------------------------------
 
 		case "PREFIX_SCAN":
-			if len(parts) != 3 {
+			if len(parts) != 4 {
 				fmt.Println("Greska: PREFIX_SCAN zahteva <prefix> <pageNumber> <pageSize>")
 				continue
 			}
 
-			// PREFIX_SCAN logika
+			prefix := parts[1]
+			minKey := prefix
+			maxKey := prefix + "\xff"
+			pageNum, err1 := strconv.Atoi(parts[2])
+			pageSize, err2 := strconv.Atoi(parts[3])
+
+			if err1 != nil || err2 != nil || pageNum < 1 || pageSize < 1 {
+				fmt.Println("Nevalidan broj ili velicina stranica.")
+				continue
+			}
+
+			// Napravi cursore za sve memtabele
+			cursors := make([]cursor.Cursor, 0, len(memtableInstances))
+			for _, mt := range memtableInstances {
+				cursors = append(cursors, mt.NewCursor())
+			}
+
+			// Napravi kursore za sve SSTabele
+			sstableCursors := make([]cursor.Cursor, 0)
+			for _, level := range lsm {
+				for _, path := range level {
+					sst, err := sstable.ReadTableFromDir(path)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
+						continue
+					}
+					var newOffset int
+					for _, entry := range sum.Entries {
+						if string(entry.Key) > minKey {
+							break
+						}
+						newOffset = int(entry.Offset)
+					}
+					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					if err != nil {
+						fmt.Printf("Greška prilikom formiranja kursora...")
+					}
+					sstableCursors = append(sstableCursors, &newCursor)
+				}
+			}
+
+			cursors = append(cursors, sstableCursors...)
+
+			// Napravi jedan multi cursor kao wrapper svih cursora
+			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
+			defer mc.Close()
+
+			// Prikupi sve zapise
+			records := make(map[string]struct {
+				value []byte
+				ts    [16]byte
+			})
+
+			for mc.Next() {
+				key := mc.Key()
+				if key == "" {
+					continue
+				}
+
+				// Preskoci ako je izbrisano
+				if mc.Tombstone() {
+					delete(records, key)
+					continue
+				}
+
+				// Sacuvaj samo najnoviju verziju
+				currTS := mc.Timestamp()
+				if existing, ok := records[key]; ok {
+					if bytes.Compare(currTS[:], existing.ts[:]) > 0 {
+						// Novi zapis ima veci timestamp, azuriraj
+						records[key] = struct {
+							value []byte
+							ts    [16]byte
+						}{
+							value: mc.Value(),
+							ts:    currTS,
+						}
+					}
+				} else {
+					// Ne postoji u records, samo dodaj
+					records[key] = struct {
+						value []byte
+						ts    [16]byte
+					}{
+						value: mc.Value(),
+						ts:    currTS,
+					}
+				}
+			}
+
+			// Sortiraj kljuceve
+			sortedKeys := make([]string, 0, len(records))
+			for k := range records {
+				if k >= minKey && k <= maxKey {
+					sortedKeys = append(sortedKeys, k)
+				}
+			}
+			sort.Strings(sortedKeys)
+
+			// Paginacija
+			total := len(sortedKeys)
+			start := (pageNum - 1) * pageSize
+			if start >= total {
+				fmt.Printf("Nema zapisa (stranica %d od %d)\n", pageNum, (total+pageSize-1)/pageSize)
+				continue
+			}
+			end := start + pageSize
+			if end > total {
+				end = total
+			}
+
+			// Prikazi rezultate
+			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
+			for _, key := range sortedKeys[start:end] {
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, records[key].value)
+			}
+
+			// Zatvori multicursor
+			mc.Close()
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// RANGE_SCAN komanda
@@ -707,6 +831,204 @@ func main() {
 			for _, key := range sortedKeys[start:end] {
 				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, records[key].value)
 			}
+
+			// Zatvori multicursor
+			mc.Close()
+
+		// --------------------------------------------------------------------------------------------------------------------------
+		// PREFIX_ITERATE komanda
+		// --------------------------------------------------------------------------------------------------------------------------
+
+		case "PREFIX_ITERATE":
+			if len(parts) != 2 {
+				fmt.Println("Usage: PREFIX_ITERATE <prefix>")
+				continue
+			}
+
+			prefix := parts[1]
+			minKey := prefix
+			maxKey := prefix + "\xff"
+
+			// Napravi cursore za sve memtabele
+			cursors := make([]cursor.Cursor, 0, len(memtableInstances))
+			for _, mt := range memtableInstances {
+				cursors = append(cursors, mt.NewCursor())
+			}
+
+			// Napravi kursore za sve SSTabele
+			sstableCursors := make([]cursor.Cursor, 0)
+			for _, level := range lsm {
+				for _, path := range level {
+					sst, err := sstable.ReadTableFromDir(path)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
+						continue
+					}
+					var newOffset int
+					for _, entry := range sum.Entries {
+						if string(entry.Key) > minKey {
+							break
+						}
+						newOffset = int(entry.Offset)
+					}
+					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					if err != nil {
+						fmt.Printf("Greška prilikom formiranja kursora...")
+					}
+					sstableCursors = append(sstableCursors, &newCursor)
+				}
+			}
+
+			cursors = append(cursors, sstableCursors...)
+
+			// Napravi jedan multi cursor kao wrapper svih cursora
+			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
+
+			// Iterate petlja
+		outer_prefix:
+			for {
+				mc.Next()
+				key := mc.Key()
+
+				if key == "" {
+					break
+				}
+
+				// Preskoci izbrisane kljuceve
+				if mc.Tombstone() {
+					continue
+				}
+
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, mc.Value())
+				fmt.Printf("\nNEXT/STOP\n> ")
+
+				// Citanje linije iz inputa
+				if !scanner.Scan() {
+					break
+				}
+
+				// Podijeli input na dijelove
+				input := strings.TrimSpace(scanner.Text())
+				if len(input) == 0 {
+					continue
+				}
+
+				switch strings.ToUpper(input) {
+				case "STOP":
+					// Izadji iz petlje
+					break outer_prefix
+				case "NEXT":
+					// Predji na sledeci element
+				default:
+					fmt.Println("Unknown command. Use NEXT or STOP")
+				}
+			}
+
+			// Zatvori multicursor
+			mc.Close()
+
+			// --------------------------------------------------------------------------------------------------------------------------
+			// RANGE_ITERATE komanda
+			// --------------------------------------------------------------------------------------------------------------------------
+
+		case "RANGE_ITERATE":
+			if len(parts) != 3 {
+				fmt.Println("Usage: RANGE_ITERATE <minKey> <maxKey>")
+				continue
+			}
+
+			minKey := parts[1]
+			maxKey := parts[2]
+
+			// Napravi cursore za sve memtabele
+			cursors := make([]cursor.Cursor, 0, len(memtableInstances))
+			for _, mt := range memtableInstances {
+				cursors = append(cursors, mt.NewCursor())
+			}
+
+			// Napravi kursore za sve SSTabele
+			sstableCursors := make([]cursor.Cursor, 0)
+			for _, level := range lsm {
+				for _, path := range level {
+					sst, err := sstable.ReadTableFromDir(path)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
+					if err != nil {
+						fmt.Printf("Greška prilikom čitanja SSTable...")
+					}
+					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
+						continue
+					}
+					var newOffset int
+					for _, entry := range sum.Entries {
+						if string(entry.Key) > minKey {
+							break
+						}
+						newOffset = int(entry.Offset)
+					}
+					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					if err != nil {
+						fmt.Printf("Greška prilikom formiranja kursora...")
+					}
+					sstableCursors = append(sstableCursors, &newCursor)
+				}
+			}
+
+			cursors = append(cursors, sstableCursors...)
+
+			// Napravi jedan multi cursor kao wrapper svih cursora
+			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
+
+			// Iterate petlja
+		outer_range:
+			for {
+				mc.Next()
+				key := mc.Key()
+
+				if key == "" {
+					break
+				}
+
+				// Preskoci izbrisane kljuceve
+				if mc.Tombstone() {
+					continue
+				}
+
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, mc.Value())
+				fmt.Printf("\nNEXT/STOP\n> ")
+
+				// Citanje linije iz inputa
+				if !scanner.Scan() {
+					break
+				}
+
+				// Podijeli input na dijelove
+				input := strings.TrimSpace(scanner.Text())
+				if len(input) == 0 {
+					continue
+				}
+
+				switch strings.ToUpper(input) {
+				case "STOP":
+					// Izadji iz petlje
+					break outer_range
+				case "NEXT":
+					// Predji na sledeci element
+				default:
+					fmt.Println("Unknown command. Use NEXT or STOP")
+				}
+			}
+
+			// Zatvori multicursor
+			mc.Close()
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// HELP i EXIT komanda
