@@ -19,20 +19,26 @@ func ReadTableFromDir(subdirPath string) (*SSTable, error) {
 		filePath := filepath.Join(subdirPath, files[0].Name())
 		return &SSTable{SingleSSTable: true, SingleFilePath: filePath}, nil
 	} else {
-		var dataPath string
+		sst := &SSTable{SingleSSTable: false}
 		for _, f := range files {
 			if strings.HasSuffix(f.Name(), "Data.db") {
-				dataPath = filepath.Join(subdirPath, f.Name())
+				sst.DataFilePath = filepath.Join(subdirPath, f.Name())
 			}
-		}
-		for _, f := range files {
 			if strings.HasSuffix(f.Name(), "Index.db") {
-				indexPath := filepath.Join(subdirPath, f.Name())
-				return &SSTable{SingleSSTable: false, IndexFilePath: indexPath, DataFilePath: dataPath}, nil
+				sst.IndexFilePath = filepath.Join(subdirPath, f.Name())
+			}
+			if strings.HasSuffix(f.Name(), "Summary.db") {
+				sst.SummaryFilePath = filepath.Join(subdirPath, f.Name())
+			}
+			if strings.HasSuffix(f.Name(), "Filter.db") {
+				sst.FilterFilePath = filepath.Join(subdirPath, f.Name())
+			}
+			if strings.HasSuffix(f.Name(), "Metadata.db") {
+				sst.MetadataFilePath = filepath.Join(subdirPath, f.Name())
 			}
 		}
+		return sst, nil
 	}
-	return nil, err
 }
 
 func ReadSummaryFromTable(sst *SSTable, bm *blockmanager.BlockManager, blockSize int) (*Summary, error) {

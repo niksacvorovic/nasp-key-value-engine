@@ -408,6 +408,52 @@ func main() {
 				fmt.Printf("Kljuc '%s' nije pronadjen.\n", key)
 			}
 
+		// --------------------------------------------------------------------------------------------------------------------------
+		// VALIDATE komanda
+		// --------------------------------------------------------------------------------------------------------------------------
+
+		case "VALIDATE":
+			if len(parts) != 1 {
+				fmt.Println("Greska: VALIDATE ne zahteva dodatne parametre")
+				continue
+			}
+			fmt.Println("Unesite broj jedne od datih SSTabela za validaciju: ")
+			tableIndex := 1
+			for _, level := range lsm {
+				for _, tableDir := range level {
+					fmt.Println(tableIndex, ") ", tableDir)
+					tableIndex++
+				}
+			}
+
+			if !scanner.Scan() {
+				continue
+			}
+
+			tableNum, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+			if err != nil || tableNum >= tableIndex {
+				fmt.Println("Neispravan unos!")
+			}
+
+			findTable := 1
+			for _, level := range lsm {
+				for _, tableDir := range level {
+					if findTable == tableNum {
+						sst, err := sstable.ReadTableFromDir(tableDir)
+						if err != nil {
+							fmt.Println("Greška u čitanju foldera!")
+						}
+						correct, err := sstable.ValidateMerkleTree(bm, sst, cfg.BlockSize)
+						if correct {
+							fmt.Println("Nisu pronađene greške u datoj SSTabeli!")
+						} else {
+							fmt.Printf(err.Error())
+						}
+					}
+					findTable++
+				}
+			}
+
 		// ========== PROBABILISTIC ==========
 
 		case "BLOOM_CREATE":

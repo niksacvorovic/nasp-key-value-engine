@@ -2,7 +2,6 @@ package sstable
 
 import (
 	"bytes"
-	"crypto/md5"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -247,7 +246,6 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	sst := NewMultiFileSSTable(sstDir, timestamp)
 
 	bloom := probabilistic.CreateBF(len(records), 0.01)
-	leaves := make([][]byte, 0)
 	summaryEntries := make([]SummaryEntry, 0)
 
 	dataBuf := &bytes.Buffer{}
@@ -268,17 +266,18 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 		indexBuf.Write(rec.Key)
 		binary.Write(indexBuf, binary.LittleEndian, offsetNow)
 
-		// Bloom filter i Merkle hash
+		// Bloom filter
 		bloom.AddElement(string(rec.Key))
-		h := md5.Sum(rb)
-		leaves = append(leaves, h[:])
 
 		// Summary
 		if i%step == 0 {
 			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: offsetNow})
 		}
 	}
-
+	if dataBuf.Len()%blockSize != 0 {
+		padding := make([]byte, blockSize-(dataBuf.Len()/blockSize))
+		dataBuf.Write(padding)
+	}
 	// Zapis data i index
 	_ = writeBlocks(bm, sst.DataFilePath, dataBuf.Bytes(), blockSize)
 	_ = writeBlocks(bm, sst.IndexFilePath, indexBuf.Bytes(), blockSize)
@@ -304,12 +303,8 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 	_ = writeBlocks(bm, sst.FilterFilePath, bloom.Serialize(), blockSize)
 
 	// Merkle
-	leavesBytes := make([]byte, 0, len(leaves)*16)
-	for _, h := range leaves {
-		leavesBytes = append(leavesBytes, h...)
-	}
 	mt := merkletree.NewMerkleTree()
-	mt.ConstructMerkleTree(leavesBytes, 16)
+	mt.ConstructMerkleTree(dataBuf.Bytes(), blockSize)
 	_ = writeBlocks(bm, sst.MetadataFilePath, mt.Serialize(), blockSize)
 
 	sst.Filter = &bloom
@@ -336,15 +331,12 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 	offsetMap := make([]int64, 6)
 
 	dataBuf := &bytes.Buffer{}
-	leaves := make([][]byte, 0)
 	for _, rec := range records {
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
 		rb := recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)
 		dataBuf.Write(rb)
-		h := md5.Sum(rb)
-		leaves = append(leaves, h[:])
 		bloom.AddElement(string(rec.Key))
 	}
 	offsetMap[0] = sstOffset
@@ -392,12 +384,8 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 	sstOffset += int64(len(filterBytes))
 	b.Write(filterBytes)
 
-	leavesBytes := make([]byte, 0, len(leaves)*16)
-	for _, h := range leaves {
-		leavesBytes = append(leavesBytes, h...)
-	}
 	mt := merkletree.NewMerkleTree()
-	mt.ConstructMerkleTree(leavesBytes, 16)
+	mt.ConstructMerkleTree(dataBuf.Bytes(), blockSize)
 	metadata := mt.Serialize()
 	offsetMap[4] = sstOffset
 	sstOffset += int64(len(metadata))
@@ -617,34 +605,63 @@ func LoadMerkleTree(bm *blockmanager.BlockManager, path string, blockSize int) (
 // ValidateMerkleTree ponovo hashira svaki data-blok i poredi sa upisanim stablom.
 // Vraća false i indeks prvog izmenjenog bloka ukoliko se detektuje nepodudaranje.
 func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize int) (bool, error) {
-	bs := blockSize
-	hashes := make([][]byte, 0)
+	// bs := blockSize
+	// hashes := make([][]byte, 0)
 
-	for blkIdx := 0; ; blkIdx++ {
-		blk, err := bm.ReadBlock(sst.DataFilePath, blkIdx)
+	// for blkIdx := 0; ; blkIdx++ {
+	// 	blk, err := bm.ReadBlock(sst.DataFilePath, blkIdx)
+	// 	if err != nil {
+	// 		return false, err
+	// 	}
+	// 	fi, _ := os.Stat(sst.DataFilePath)
+	// 	if int64(blkIdx*bs) >= fi.Size() {
+	// 		break
+	// 	}
+	// 	if int64((blkIdx+1)*bs) > fi.Size() {
+	// 		blk = blk[:fi.Size()-int64(blkIdx*bs)]
+	// 	}
+	// 	h := md5.Sum(blk)
+	// 	hashes = append(hashes, h[:])
+	// 	if int64((blkIdx+1)*bs) >= fi.Size() {
+	// 		break
+	// 	}
+	// }
+
+	// concat := make([]byte, 0, len(hashes)*16)
+	// for _, h := range hashes {
+	// 	concat = append(concat, h...)
+	// }
+	var err error
+	var data []byte
+	if sst.SingleSSTable {
+		offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 		if err != nil {
 			return false, err
 		}
-		fi, _ := os.Stat(sst.DataFilePath)
-		if int64(blkIdx*bs) >= fi.Size() {
-			break
+		sst.Metadata, err = LoadMerkleTreeSingleFile(bm, sst.SingleFilePath, blockSize, offsets[4], offsets[5])
+		if err != nil {
+			return false, err
 		}
-		if int64((blkIdx+1)*bs) > fi.Size() {
-			blk = blk[:fi.Size()-int64(blkIdx*bs)]
+		data, err = readSegment(bm, sst.SingleFilePath, 48, int(offsets[0])-48, blockSize)
+		if err != nil {
+			return false, err
 		}
-		h := md5.Sum(blk)
-		hashes = append(hashes, h[:])
-		if int64((blkIdx+1)*bs) >= fi.Size() {
-			break
+	} else {
+		sst.Metadata, err = LoadMerkleTree(bm, sst.SingleFilePath, blockSize)
+		if err != nil {
+			return false, err
 		}
-	}
-
-	concat := make([]byte, 0, len(hashes)*16)
-	for _, h := range hashes {
-		concat = append(concat, h...)
+		dataInfo, err := os.Stat(sst.DataFilePath)
+		if err != nil {
+			return false, err
+		}
+		data, err = readSegment(bm, sst.DataFilePath, 0, int(dataInfo.Size()), blockSize)
+		if err != nil {
+			return false, err
+		}
 	}
 	tmp := merkletree.NewMerkleTree()
-	tmp.ConstructMerkleTree(concat, 16)
+	tmp.ConstructMerkleTree(data, blockSize)
 
 	ok, diff := merkletree.Compare(&tmp, sst.Metadata)
 	if ok {
