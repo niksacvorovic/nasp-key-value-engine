@@ -323,32 +323,31 @@ func main() {
 				continue
 			}
 
-			var record *sstable.Record
-
 			// Pretrazi SSTable-ove
-			if !found {
-				maxLevel := byte(0)
-				for level := range lsm {
-					if level > maxLevel {
-						maxLevel = level
-					}
+			maxLevel := byte(0)
+			for level := range lsm {
+				if level > maxLevel {
+					maxLevel = level
+				}
+			}
+
+		Loop:
+			for level := byte(0); level <= maxLevel; level++ {
+				sstableDirs, exists := lsm[level]
+				if !exists {
+					continue
 				}
 
-			Loop:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
+				for _, dir := range sstableDirs {
+					table, err := sstable.ReadTableFromDir(dir)
+					if err != nil {
+						fmt.Println("Greška u čitanju foldera SSTabele")
 					}
-
-					for _, dir := range sstableDirs {
-						record, found = sstable.SearchSSTable(dir, key, cfg, bm, cfg.SSTableCompression, dict)
-
-						if found {
-							// fmt.Println("sstable")
-							fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", record.Key, record.Value)
-							break Loop
-						}
+					record, found := sstable.SearchSSTable(table, key, cfg, bm, dict)
+					if found {
+						// fmt.Println("sstable")
+						fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", record.Key, record.Value)
+						break Loop
 					}
 				}
 			}
@@ -447,7 +446,7 @@ func main() {
 						if correct {
 							fmt.Println("Nisu pronađene greške u datoj SSTabeli!")
 						} else {
-							fmt.Printf(err.Error())
+							fmt.Println(err.Error())
 						}
 					}
 					findTable++
