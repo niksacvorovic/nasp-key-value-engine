@@ -16,7 +16,7 @@ func NewMultiCursor(minKey, maxKey string, cursors ...Cursor) *MultiCursor {
 		maxKey:  maxKey,
 	}
 
-	// Za svaku cursor pronadji prvi kljuc koji je >= minKeyb
+	// Za svaku cursor pronadji prvi kljuc koji je >= minKey
 	for _, c := range mc.cursors {
 		c.Seek(minKey)
 	}
@@ -29,8 +29,10 @@ func (mc *MultiCursor) Next() bool {
 	var nextCursor Cursor
 	var nextKey string
 
-	// Resetuj trenutni cursor
-	mc.current = nil
+	// Trenutni cursor prebaci na sledeci zapis
+	if mc.current != nil {
+		mc.current.Next()
+	}
 
 	// Pronadji cursor sa najmanjim kljucem u opsegu
 	for _, c := range mc.cursors {
@@ -49,11 +51,6 @@ func (mc *MultiCursor) Next() bool {
 	}
 
 	mc.current = nextCursor
-
-	// Povecaj izabrani cursors na sledeci zapis
-	if mc.current != nil {
-		mc.current.Next()
-	}
 
 	return mc.current != nil
 }
