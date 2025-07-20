@@ -59,6 +59,7 @@ func ParseArgs(input string) ([]string, error) {
 	return parts, nil
 }
 
+// Funkcija za spremanje ispisa
 func MaybeQuote(s string) string {
 	if strings.ContainsAny(s, " \t\"") {
 		escaped := strings.ReplaceAll(s, `"`, `\"`)
