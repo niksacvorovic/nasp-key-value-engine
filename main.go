@@ -23,6 +23,8 @@ import (
 	"projekat/structs/probabilistic"
 	"projekat/structs/sstable"
 	"projekat/structs/wal"
+
+	"projekat/utils"
 )
 
 func main() {
@@ -162,7 +164,11 @@ func main() {
 		input := strings.TrimSpace(scanner.Text())
 
 		// Podela komande na delove
-		parts := strings.Fields(input)
+		parts, err := utils.ParseArgs(input)
+		if err != nil {
+			fmt.Println("Parse error:", err)
+			continue
+		}
 
 		if len(parts) == 0 {
 			continue
@@ -305,7 +311,7 @@ func main() {
 				value, found = memtableInstances[i].Get(key)
 				if found {
 					// fmt.Println("memtable")
-					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, value)
+					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 					// Zapis u keš
 					lru.UpdateCache(key, value)
 					break
@@ -319,7 +325,7 @@ func main() {
 			value, found = lru.CheckCache(key)
 			if found {
 				// fmt.Println("cache")
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, value)
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 				continue
 			}
 
@@ -345,8 +351,7 @@ func main() {
 						record, found = sstable.SearchSSTable(dir, key, cfg, bm, cfg.SSTableCompression, dict)
 
 						if found {
-							// fmt.Println("sstable")
-							fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", record.Key, record.Value)
+							fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
 							break Loop
 						}
 					}
@@ -354,7 +359,7 @@ func main() {
 			}
 
 			if !found {
-				fmt.Printf("Nije pronadjena vrednost za kljuc: [%s]\n", key)
+				fmt.Printf("Nije pronadjena vrednost za kljuc: [%s]\n", utils.MaybeQuote(key))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -740,7 +745,7 @@ func main() {
 			// Prikazi rezultate
 			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
 			for _, key := range sortedKeys[start:end] {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, records[key].value)
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
 			}
 
 			// Zatvori multicursor
@@ -875,7 +880,7 @@ func main() {
 			// Prikazi rezultate
 			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
 			for _, key := range sortedKeys[start:end] {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, records[key].value)
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
 			}
 
 			// Zatvori multicursor
@@ -951,7 +956,7 @@ func main() {
 					continue
 				}
 
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, mc.Value())
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
 				fmt.Printf("\nNEXT/STOP\n> ")
 
 				// Citanje linije iz inputa
@@ -1048,7 +1053,7 @@ func main() {
 					continue
 				}
 
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", key, mc.Value())
+				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
 				fmt.Printf("\nNEXT/STOP\n> ")
 
 				// Citanje linije iz inputa
