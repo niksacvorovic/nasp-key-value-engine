@@ -148,7 +148,7 @@ func main() {
 	// Interfejs petlja
 	// -------------------------------------------------------------------------------------------------------------------------------
 
-	fmt.Println("Dobrodosli u Key-Value Engine!")
+	fmt.Println("Dobrodošli u Key-Value Engine!")
 	fmt.Println("Unesite komandu (help za listu dostupnih komandi):")
 
 	// Scanner za citanje korisnickih unosa
@@ -166,7 +166,7 @@ func main() {
 		// Podela komande na delove
 		parts, err := utils.ParseArgs(input)
 		if err != nil {
-			fmt.Println("Parse error:", err)
+			fmt.Println("Greška pri parsiranju:", err)
 			continue
 		}
 
@@ -193,7 +193,7 @@ func main() {
 			timestamp := binary.BigEndian.Uint64(bucket[0:8])
 			tokens := uint8(bucket[8])
 			if tokens == 0 && time.Now().Unix()-int64(timestamp) < int64(cfg.TokenInterval) {
-				fmt.Println("Prekoračen broj tokena! Molim Vas sačekajte...")
+				fmt.Println("Prekoračen broj tokena! Molimo sačekajte...")
 				continue
 			} else {
 				if time.Now().Unix()-int64(timestamp) >= int64(cfg.TokenInterval) {
@@ -216,13 +216,13 @@ func main() {
 		// PUT komanda ocekuje 2 argumenta: key, value
 		case "PUT":
 			if strings.HasPrefix(parts[1], "__sys__") {
-				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				fmt.Println("Zabranjena operacija nad internim ključevima.")
 				continue
 			}
 
 			// Proverava da li PUT komanda ima tačno 2 argumenta: key i value
 			if len(parts) != 3 {
-				fmt.Println("Greška: PUT zahteva <key> <value>")
+				fmt.Println("Greška: PUT zahteva <ključ> <vrednost>")
 				continue
 			}
 
@@ -241,13 +241,13 @@ func main() {
 			ts, err := walInstance.AppendRecord(tombstone, key, value)
 			if err != nil {
 				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
-				fmt.Printf("Greška prilikom pisanja u WAL: %v\n", err)
+				fmt.Printf("Greška pri pisanju u WAL: %v\n", err)
 			} else {
 				memtableInstances[mtIndex].Add(ts, tombstone, parts[1], value)
 				memtableInstances[mtIndex].SetWatermark(walInstance.LastSeg)
 				// Proveravamo da li je trenutni memtable popunjen
 				if memtableInstances[mtIndex].IsFull() {
-					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazak na sledeći...")
+					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazim na sledeći...")
 					mtIndex = (mtIndex + 1) % cfg.MemtableNum
 					// Ako je i sledeći memtable pun - svi su puni
 					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
@@ -263,7 +263,7 @@ func main() {
 							}
 						}
 						walInstance.FirstSeg = watermark
-						fmt.Println("Prevođenje sadržaja Memtable u SSTable")
+						fmt.Println("Prevodim sadržaj Memtable-a u SSTable")
 						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
 
 						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
@@ -283,7 +283,7 @@ func main() {
 					}
 				}
 				// Ako je upis u WAL uspesan, dodaje se u Memtable
-				fmt.Printf("Uspešno dodato u WAL i Memtable: [%s -> %s]\n", key, value)
+				fmt.Printf("Uspešno dodato: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -293,12 +293,12 @@ func main() {
 		// GET komanda ocekuje 1 argument: key
 		case "GET":
 			if strings.HasPrefix(parts[1], "__sys__") {
-				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				fmt.Println("Zabranjena operacija nad internim ključevima.")
 				continue
 			}
 
 			if len(parts) != 2 {
-				fmt.Println("Greska: GET zahteva <key>")
+				fmt.Println("Greška: GET zahteva <ključ>")
 				continue
 			}
 			key := parts[1]
@@ -311,7 +311,7 @@ func main() {
 				value, found = memtableInstances[i].Get(key)
 				if found {
 					// fmt.Println("memtable")
-					fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
+					fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 					// Zapis u keš
 					lru.UpdateCache(key, value)
 					break
@@ -325,7 +325,7 @@ func main() {
 			value, found = lru.CheckCache(key)
 			if found {
 				// fmt.Println("cache")
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
+				fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 				continue
 			}
 
@@ -351,7 +351,7 @@ func main() {
 						record, found = sstable.SearchSSTable(dir, key, cfg, bm, cfg.SSTableCompression, dict)
 
 						if found {
-							fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
+							fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
 							break Loop
 						}
 					}
@@ -369,12 +369,12 @@ func main() {
 		// DELETE komanda ocekuje 1 argument: key
 		case "DELETE":
 			if strings.HasPrefix(parts[1], "__sys__") {
-				fmt.Println("Zabranjena operacija nad internim kljucevima.")
+				fmt.Println("Zabranjena operacija nad internim ključevima.")
 				continue
 			}
 
 			if len(parts) != 2 {
-				fmt.Println("Greska: DELETE zahteva <key>")
+				fmt.Println("Greška: DELETE zahteva <ključ>")
 				continue
 			}
 			// Brisanje iz keša
@@ -400,17 +400,17 @@ func main() {
 			if found {
 				_, err = walInstance.AppendRecord(tombstone, key, value)
 				if err != nil {
-					fmt.Printf("Greska prilikom brisanja iz WAL-a: [%s -> %s]\n", key, value)
+					fmt.Printf("Greška prilikom brisanja iz WAL-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 				} else {
 					err := memtableInstances[delIndex].Delete(parts[1])
 					if err != nil {
-						fmt.Printf("Greska prilikom brisanja iz Memtable-a: %v\n", err)
+						fmt.Printf("Greška prilikom brisanja iz Memtable-a: %v\n", err)
 					} else {
-						fmt.Printf("Uspesno izbrisano iz WAL-a Memtable-a: [%s -> %s]\n", key, value)
+						fmt.Printf("Uspešno izbrisano iz WAL-a Memtable-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 					}
 				}
 			} else {
-				fmt.Printf("Kljuc '%s' nije pronadjen.\n", key)
+				fmt.Printf("Ključ nije pronađen: [%s]\n", utils.MaybeQuote(string(key)))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -419,10 +419,10 @@ func main() {
 
 		case "VALIDATE":
 			if len(parts) != 1 {
-				fmt.Println("Greska: VALIDATE ne zahteva dodatne parametre")
+				fmt.Println("Greška: VALIDATE ne zahteva argumente")
 				continue
 			}
-			fmt.Println("Unesite broj jedne od datih SSTabela za validaciju: ")
+			fmt.Println("Izaberite SSTabelu za validaciju:")
 			tableIndex := 1
 			for _, level := range lsm {
 				for _, tableDir := range level {
@@ -450,9 +450,9 @@ func main() {
 						}
 						correct, err := sstable.ValidateMerkleTree(bm, sst, cfg.BlockSize)
 						if correct {
-							fmt.Println("Nisu pronađene greške u datoj SSTabeli!")
+							fmt.Println("SSTabela je validna, nema grešaka.")
 						} else {
-							fmt.Printf(err.Error())
+							fmt.Println("Greška u validaciji:", err)
 						}
 					}
 					findTable++
@@ -463,7 +463,7 @@ func main() {
 
 		case "BLOOM_CREATE":
 			if len(parts) != 4 {
-				fmt.Println("Usage: BLOOM_CREATE <name> <expectedElements> <falsePositiveRate>")
+				fmt.Println("Upotreba: BLOOM_CREATE <naziv> <očekivani_broj_elemenata> <stopa_greške>")
 				continue
 			}
 			name := parts[1]
@@ -471,11 +471,11 @@ func main() {
 			fpRate, _ := strconv.ParseFloat(parts[3], 64)
 			bf := probabilistic.CreateBF(expected, fpRate)
 			probabilistic.SaveBloom(name, &bf, memtableInstances[0])
-			fmt.Println("Bloom filter kreiran.")
+			fmt.Println("Bloom filter uspešno kreiran.")
 
 		case "BLOOM_ADD":
 			if len(parts) != 3 {
-				fmt.Println("Usage: BLOOM_ADD <name> <element>")
+				fmt.Println("Upotreba: BLOOM_ADD <naziv> <element>")
 				continue
 			}
 			name := parts[1]
@@ -487,11 +487,11 @@ func main() {
 			}
 			bf.AddElement(elem)
 			probabilistic.SaveBloom(name, bf, memtableInstances[0])
-			fmt.Println("Element dodat u Bloom filter.")
+			fmt.Println("Element uspešno dodat u Bloom filter.")
 
 		case "BLOOM_CHECK":
 			if len(parts) != 3 {
-				fmt.Println("Usage: BLOOM_CHECK <name> <element>")
+				fmt.Println("Upotreba: BLOOM_CHECK <naziv> <element>")
 				continue
 			}
 			name := parts[1]
@@ -502,14 +502,14 @@ func main() {
 				continue
 			}
 			if bf.IsAdded(elem) {
-				fmt.Println("Element je mozda prisutan.")
+				fmt.Println("Element je moguće prisutan.")
 			} else {
-				fmt.Println("Element sigurno nije prisutan.")
+				fmt.Println("Element definitivno nije prisutan.")
 			}
 
 		case "CMS_CREATE":
 			if len(parts) != 4 {
-				fmt.Println("Usage: CMS_CREATE <name> <epsilon> <delta>")
+				fmt.Println("Upotreba: CMS_CREATE <naziv> <epsilon> <delta>")
 				continue
 			}
 			name := parts[1]
@@ -521,30 +521,30 @@ func main() {
 
 		case "CMS_ADD":
 			if len(parts) != 3 {
-				fmt.Println("Usage: CMS_ADD <name> <event>")
+				fmt.Println("Upotreba: CMS_ADD <naziv> <događaj>")
 				continue
 			}
 			name := parts[1]
 			event := parts[2]
 			cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
 			if err != nil {
-				fmt.Println("Greska:", err)
+				fmt.Println("Greška:", err)
 				continue
 			}
 			cms.Add(event)
 			probabilistic.SaveCMS(name, cms, memtableInstances[0])
-			fmt.Println("Dogadjaj dodat u CMS.")
+			fmt.Println("Događaj dodat u CMS.")
 
 		case "CMS_COUNT":
 			if len(parts) != 3 {
-				fmt.Println("Usage: CMS_COUNT <name> <event>")
+				fmt.Println("Upotreba: CMS_COUNT <naziv> <događaj>")
 				continue
 			}
 			name := parts[1]
 			event := parts[2]
 			cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
 			if err != nil {
-				fmt.Println("Greska:", err)
+				fmt.Println("Greška:", err)
 				continue
 			}
 			count := cms.FindCount(event)
@@ -552,7 +552,7 @@ func main() {
 
 		case "HLL_CREATE":
 			if len(parts) != 3 {
-				fmt.Println("Usage: HLL_CREATE <name> <precision>")
+				fmt.Println("Upotreba: HLL_CREATE <naziv> <preciznost>")
 				continue
 			}
 			name := parts[1]
@@ -563,7 +563,7 @@ func main() {
 
 		case "HLL_ADD":
 			if len(parts) != 3 {
-				fmt.Println("Usage: HLL_ADD <name> <element>")
+				fmt.Println("Upotreba: HLL_ADD <naziv> <element>")
 				continue
 			}
 			name := parts[1]
@@ -579,20 +579,20 @@ func main() {
 
 		case "HLL_COUNT":
 			if len(parts) != 2 {
-				fmt.Println("Usage: HLL_COUNT <name>")
+				fmt.Println("Upotreba: HLL_COUNT <naziv>")
 				continue
 			}
 			name := parts[1]
 			hll, err := probabilistic.LoadHLL(name, memtableInstances[0])
 			if err != nil {
-				fmt.Println("Greska:", err)
+				fmt.Println("Greška:", err)
 				continue
 			}
 			fmt.Println("Kardinalitet:", int(hll.Estimate()))
 
 		case "SIMHASH_ADD":
 			if len(parts) != 3 {
-				fmt.Println("Usage: SIMHASH_ADD <name> <text>")
+				fmt.Println("Upotreba: SIMHASH_ADD <naziv> <tekst>")
 				continue
 			}
 			name := parts[1]
@@ -604,16 +604,16 @@ func main() {
 
 		case "SIMHASH_DIST":
 			if len(parts) != 3 {
-				fmt.Println("Usage: SIMHASH_DIST <name1> <name2>")
+				fmt.Println("Upotreba: SIMHASH_DIST <naziv1> <naziv2>")
 				continue
 			}
 			s1, err1 := probabilistic.LoadSimhash(parts[1], memtableInstances[0])
 			s2, err2 := probabilistic.LoadSimhash(parts[2], memtableInstances[0])
 			if err1 != nil || err2 != nil {
-				fmt.Println("Greska pri ucitavanju fingerprinta")
+				fmt.Println("Greška pri učitavanju fingerprinta")
 				continue
 			}
-			fmt.Printf("Hamming distanca: %d\n", probabilistic.HammingDistance(s1, s2))
+			fmt.Printf("Hamming udaljenost: %d\n", probabilistic.HammingDistance(s1, s2))
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
@@ -621,7 +621,7 @@ func main() {
 
 		case "PREFIX_SCAN":
 			if len(parts) != 4 {
-				fmt.Println("Greska: PREFIX_SCAN zahteva <prefix> <pageNumber> <pageSize>")
+				fmt.Println("Greška: PREFIX_SCAN zahteva <prefiks> <broj_strane> <veličina_strane>")
 				continue
 			}
 
@@ -632,7 +632,7 @@ func main() {
 			pageSize, err2 := strconv.Atoi(parts[3])
 
 			if err1 != nil || err2 != nil || pageNum < 1 || pageSize < 1 {
-				fmt.Println("Nevalidan broj ili velicina stranica.")
+				fmt.Println("Nevalidan broj ili veličina stranica.")
 				continue
 			}
 
@@ -648,11 +648,11 @@ func main() {
 				for _, path := range level {
 					sst, err := sstable.ReadTableFromDir(path)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
 						continue
@@ -666,7 +666,7 @@ func main() {
 					}
 					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
-						fmt.Printf("Greška prilikom formiranja kursora...")
+						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
 					sstableCursors = append(sstableCursors, &newCursor)
 				}
@@ -743,9 +743,9 @@ func main() {
 			}
 
 			// Prikazi rezultate
-			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
+			fmt.Printf("Strana %d (rezultati %d-%d od %d):\n", pageNum, start+1, end, total)
 			for _, key := range sortedKeys[start:end] {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
 			}
 
 			// Zatvori multicursor
@@ -757,7 +757,7 @@ func main() {
 
 		case "RANGE_SCAN":
 			if len(parts) != 5 {
-				fmt.Println("Usage: RANGE_SCAN <minKey> <maxKey> <pageNumber> <pageSize>")
+				fmt.Println("Greška: RANGE_SCAN zahteva <početni_ključ> <krajnji_ključ> <broj_strane> <veličina_strane>")
 				continue
 			}
 
@@ -767,7 +767,7 @@ func main() {
 			pageSize, err2 := strconv.Atoi(parts[4])
 
 			if err1 != nil || err2 != nil || pageNum < 1 || pageSize < 1 {
-				fmt.Println("Nevalidan broj ili velicina stranica.")
+				fmt.Println("Nevalidan broj ili veličina stranica.")
 				continue
 			}
 
@@ -783,11 +783,11 @@ func main() {
 				for _, path := range level {
 					sst, err := sstable.ReadTableFromDir(path)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
 						continue
@@ -801,7 +801,7 @@ func main() {
 					}
 					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
-						fmt.Printf("Greška prilikom formiranja kursora...")
+						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
 					sstableCursors = append(sstableCursors, &newCursor)
 				}
@@ -878,9 +878,9 @@ func main() {
 			}
 
 			// Prikazi rezultate
-			fmt.Printf("Stranica %d (Kljucevi %d-%d od %d):\n", pageNum, start+1, end, total)
+			fmt.Printf("Strana %d (rezultati %d-%d od %d):\n", pageNum, start+1, end, total)
 			for _, key := range sortedKeys[start:end] {
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(records[key].value)))
 			}
 
 			// Zatvori multicursor
@@ -892,7 +892,7 @@ func main() {
 
 		case "PREFIX_ITERATE":
 			if len(parts) != 2 {
-				fmt.Println("Usage: PREFIX_ITERATE <prefix>")
+				fmt.Println("Greška: PREFIX_ITERATE zahteva <prefiks>")
 				continue
 			}
 
@@ -912,11 +912,11 @@ func main() {
 				for _, path := range level {
 					sst, err := sstable.ReadTableFromDir(path)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
 						continue
@@ -930,7 +930,7 @@ func main() {
 					}
 					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
-						fmt.Printf("Greška prilikom formiranja kursora...")
+						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
 					sstableCursors = append(sstableCursors, &newCursor)
 				}
@@ -956,8 +956,8 @@ func main() {
 					continue
 				}
 
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
-				fmt.Printf("\nNEXT/STOP\n> ")
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
+				fmt.Print("Naredba (NEXT/STOP): ")
 
 				// Citanje linije iz inputa
 				if !scanner.Scan() {
@@ -977,7 +977,7 @@ func main() {
 				case "NEXT":
 					// Predji na sledeci element
 				default:
-					fmt.Println("Unknown command. Use NEXT or STOP")
+					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}
 			}
 
@@ -990,7 +990,7 @@ func main() {
 
 		case "RANGE_ITERATE":
 			if len(parts) != 3 {
-				fmt.Println("Usage: RANGE_ITERATE <minKey> <maxKey>")
+				fmt.Println("Greška: RANGE_ITERATE zahteva <početni_ključ> <krajnji_ključ>")
 				continue
 			}
 
@@ -1009,11 +1009,11 @@ func main() {
 				for _, path := range level {
 					sst, err := sstable.ReadTableFromDir(path)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
 					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable...")
+						fmt.Printf("Greška prilikom čitanja SSTable.")
 					}
 					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
 						continue
@@ -1027,7 +1027,7 @@ func main() {
 					}
 					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
-						fmt.Printf("Greška prilikom formiranja kursora...")
+						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
 					sstableCursors = append(sstableCursors, &newCursor)
 				}
@@ -1053,8 +1053,8 @@ func main() {
 					continue
 				}
 
-				fmt.Printf("Vrednost za kljuc: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
-				fmt.Printf("\nNEXT/STOP\n> ")
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
+				fmt.Print("Naredba (NEXT/STOP): ")
 
 				// Citanje linije iz inputa
 				if !scanner.Scan() {
@@ -1074,7 +1074,7 @@ func main() {
 				case "NEXT":
 					// Predji na sledeci element
 				default:
-					fmt.Println("Unknown command. Use NEXT or STOP")
+					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}
 			}
 
@@ -1086,11 +1086,40 @@ func main() {
 		// --------------------------------------------------------------------------------------------------------------------------
 
 		case "HELP":
-			fmt.Println("Podrzane komande:")
-			fmt.Println(" - PUT <key> <value>     - Dodaje ili azurira kljuc i vrednost.")
-			fmt.Println(" - GET <key>             - Prikazuje vrednost za dati kljuc.")
-			fmt.Println(" - DELETE <key>          - Brise podatke za dati kljuc.")
-			fmt.Println(" - EXIT                  - Izlazi iz aplikacije.")
+			fmt.Println("Dostupne komande:")
+			fmt.Println("  PUT <ključ> <vrednost>        - Dodaje ili ažurira par")
+			fmt.Println("  GET <ključ>                   - Prikazuje vrednost za ključ")
+			fmt.Println("  DELETE <ključ>                - Briše vrednost za ključ")
+			fmt.Println("  PREFIX_SCAN <prefiks> <str> <vel> - Pretraga po prefiksu (strana, veličina)")
+			fmt.Println("  RANGE_SCAN <start> <kraj> <str> <vel> - Pretraga po opsegu (strana, veličina)")
+			fmt.Println("  PREFIX_ITERATE <prefiks>      - Iterativna pretraga po prefiksu")
+			fmt.Println("  RANGE_ITERATE <start> <kraj>  - Iterativna pretraga po opsegu")
+			fmt.Println("  VALIDATE                      - Provera validnosti SSTabele")
+			fmt.Println("")
+			fmt.Println("Probabilističke strukture:")
+			fmt.Println("  BLOOM_CREATE <naziv> <očekivani> <greška>  - Kreira Bloom filter")
+			fmt.Println("  BLOOM_ADD <naziv> <element>     - Dodaje element u Bloom filter")
+			fmt.Println("  BLOOM_CHECK <naziv> <element>   - Proverava element u Bloom filteru")
+			fmt.Println("  CMS_CREATE <naziv> <epsilon> <delta> - Kreira Count-Min Sketch")
+			fmt.Println("  CMS_ADD <naziv> <dogadjaj>      - Dodaje događaj u CMS")
+			fmt.Println("  CMS_COUNT <naziv> <dogadjaj>    - Broji događaje u CMS")
+			fmt.Println("  HLL_CREATE <naziv> <preciznost> - Kreira HyperLogLog")
+			fmt.Println("  HLL_ADD <naziv> <element>       - Dodaje element u HLL")
+			fmt.Println("  HLL_COUNT <naziv>               - Procenjuje kardinalitet u HLL")
+			fmt.Println("  SIMHASH_ADD <naziv> <tekst>     - Kreira SimHash fingerprint")
+			fmt.Println("  SIMHASH_DIST <naziv1> <naziv2>  - Računa Hamming distancu")
+			fmt.Println("")
+			fmt.Println("Ostale komande:")
+			fmt.Println("  EXIT                      - Izlaz iz programa")
+			fmt.Println("  HELP                      - Prikaz pomoći")
+			fmt.Println("\nOpis parametara:")
+			fmt.Println("  <str> - Broj stranice (počinje od 1)")
+			fmt.Println("  <vel> - Veličina stranice (broj rezultata po stranici)")
+			fmt.Println("  <očekivani> - Očekivani broj elemenata za Bloom filter")
+			fmt.Println("  <greška> - Željena stopa lažno pozitivnih rezultata (0-1)")
+			fmt.Println("  <epsilon> - Greška u proceni za CMS")
+			fmt.Println("  <delta> - Verovatnoća greške za CMS")
+			fmt.Println("  <preciznost> - Preciznost za HLL (4-16)")
 
 		case "EXIT":
 			walInstance.WriteOnExit()
@@ -1100,7 +1129,7 @@ func main() {
 				fmt.Printf("Greška pri upisu rečnika: %v\n", err)
 			}
 
-			fmt.Println("Dovidjenja!")
+			fmt.Println("Doviđenja!")
 			return
 
 		default:
@@ -1109,6 +1138,6 @@ func main() {
 	}
 
 	if err := scanner.Err(); err != nil {
-		fmt.Println("Greska pri citanju unosa:", err)
+		fmt.Println("Greška pri čitanju unosa:", err)
 	}
 }
