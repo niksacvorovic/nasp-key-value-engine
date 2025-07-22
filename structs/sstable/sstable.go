@@ -247,6 +247,7 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 	summaryEntries := make([]SummaryEntry, 0)
+	indexOffset := uint64(0)
 
 	dataBuf := &bytes.Buffer{}
 	indexBuf := &bytes.Buffer{}
@@ -271,8 +272,10 @@ func createMultiFileSSTable(records []Record, dir string, step int, bm *blockman
 
 		// Summary
 		if i%step == 0 {
-			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: offsetNow})
+			summaryEntries = append(summaryEntries, SummaryEntry{Key: rec.Key, Offset: indexOffset})
 		}
+
+		indexOffset += 8 + rec.KeySize + 8
 	}
 	if dataBuf.Len()%blockSize != 0 {
 		padding := make([]byte, blockSize-(dataBuf.Len()/blockSize))
@@ -330,31 +333,41 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 	bloom := probabilistic.CreateBF(len(records), 0.01)
 	offsetMap := make([]int64, 6)
 
+	// zapis u databuf
 	dataBuf := &bytes.Buffer{}
-	for _, rec := range records {
+	offsets := make([]uint64, len(records))
+	for i, rec := range records {
 		rec.KeySize = uint64(len(rec.Key))
 		rec.ValueSize = uint64(len(rec.Value))
 		rec.CRC = calculateCRC(rec)
 		rb := recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)
+		offsets[i] = uint64(dataBuf.Len())
 		dataBuf.Write(rb)
 		bloom.AddElement(string(rec.Key))
 	}
+
+	// if dataBuf.Len()%blockSize != 0 {
+	// 	padding := make([]byte, blockSize-(dataBuf.Len()%blockSize))
+	// 	dataBuf.Write(padding)
+	// }
+
 	offsetMap[0] = sstOffset
 	sstOffset += int64(dataBuf.Len())
 	b.Write(dataBuf.Bytes())
 
+	// zapis u indexbuf
 	indexBuf := &bytes.Buffer{}
-	offset := uint64(0)
-	for _, rec := range records {
-		binary.Write(indexBuf, binary.LittleEndian, rec.KeySize)
+	for i, rec := range records {
+		binary.Write(indexBuf, binary.LittleEndian, uint64(len(rec.Key)))
 		indexBuf.Write(rec.Key)
-		binary.Write(indexBuf, binary.LittleEndian, offset)
-		offset += uint64(len(recordBytes(rec, dict.GetID(string(rec.Key), bm, dictPath, blockSize), compress)))
+		binary.Write(indexBuf, binary.LittleEndian, offsets[i])
 	}
+
 	offsetMap[1] = sstOffset
 	sstOffset += int64(indexBuf.Len())
 	b.Write(indexBuf.Bytes())
 
+	// zapis u summarybuf
 	summaryBuf := &bytes.Buffer{}
 	binary.Write(summaryBuf, binary.LittleEndian, lsm)
 	minK := records[0].Key
@@ -365,16 +378,18 @@ func createSingleFileSSTable(records []Record, dir string, step int, bm *blockma
 	summaryBuf.Write(maxK)
 	count := (len(records) + step - 1) / step
 	binary.Write(summaryBuf, binary.LittleEndian, uint64(count))
-	for i := 0; i < len(records); i += step {
+	indexOffset := uint64(0)
+	for i := 0; i < len(records); i++ {
 		rec := records[i]
-		binary.Write(summaryBuf, binary.LittleEndian, uint64(len(rec.Key)))
-		summaryBuf.Write(rec.Key)
-		off := uint64(0)
-		for j := 0; j < i; j++ {
-			off += uint64(len(recordBytes(records[j], dict.GetID(string(records[j].Key), bm, dictPath, blockSize), compress)))
+		keySize := uint64(len(rec.Key))
+		if i%step == 0 {
+			binary.Write(summaryBuf, binary.LittleEndian, keySize)
+			summaryBuf.Write(rec.Key)
+			binary.Write(summaryBuf, binary.LittleEndian, indexOffset)
 		}
-		binary.Write(summaryBuf, binary.LittleEndian, off)
+		indexOffset += 8 + keySize + 8
 	}
+
 	offsetMap[2] = sstOffset
 	sstOffset += int64(summaryBuf.Len())
 	b.Write(summaryBuf.Bytes())
@@ -790,6 +805,7 @@ func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, of
 	if compress {
 		// Čitamo CRC (4) + Timestamp (16) + Tombstone (1)
 		header, err := readSegment(bm, path, offset, 21, blockSize)
+
 		if err != nil {
 			return nil, 0, err
 		}
@@ -842,6 +858,7 @@ func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, of
 	} else {
 		// NE-kompresovani slučaj (isto kao ranije)
 		header, err := readSegment(bm, path, offset, 37, blockSize)
+
 		if err != nil {
 			return nil, 0, err
 		}
@@ -869,8 +886,9 @@ func ReadRecordAtOffsetSingleFile(bm *blockmanager.BlockManager, path string, of
 }
 
 // ReadIndexBlockSingleFile čita Index blok iz fajla u jednom SSTable formatu.
-func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexOffset int64, blockSize int) ([]Index, error) {
-	buf, err := readSegment(bm, path, indexOffset, 4096, blockSize)
+func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexOffset int64, length int64, blockSize int) ([]Index, error) {
+	buf, err := readSegment(bm, path, indexOffset, int(length), blockSize)
+
 	if err != nil {
 		return nil, err
 	}
@@ -895,14 +913,19 @@ func ReadIndexBlockSingleFile(bm *blockmanager.BlockManager, path string, indexO
 }
 
 // SearchSingleFile sprovodi standardni Bloom → Summary → Index → Data redosled za SSTable u jednom fajlu.
-func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, blockSize int, compress bool,
+	dict *Dictionary) (*Record, int, error) {
+
 	offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	filter, err := LoadBloomFilterSingleFile(bm, sst.SingleFilePath, blockSize, offsets[3], offsets[4])
-	if err != nil || !filter.IsAdded(string(key)) {
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to load bloom: %v", err)
+	}
+	if !filter.IsAdded(string(key)) {
 		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
 
@@ -910,13 +933,17 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 	if err != nil {
 		return nil, 0, err
 	}
-
 	if bytes.Compare(key, summary.MinKey) < 0 || bytes.Compare(key, summary.MaxKey) > 0 {
+		fmt.Printf("🚫 Key outside summary range\n")
 		return nil, 0, fmt.Errorf("key outside summary range")
 	}
 
 	idxOff := FindIndexBlockOffset(summary, key)
-	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, offsets[1]+idxOff, blockSize)
+	indexStart := offsets[1] + idxOff
+	indexEnd := offsets[2]
+	indexLen := indexEnd - indexStart
+
+	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, indexStart, indexLen, blockSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -933,8 +960,12 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 	if !found {
 		return nil, 0, fmt.Errorf("key not found in index")
 	}
-	rec, offset, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, int64(dataOff), blockSize, compress, dict)
-	return rec, int(dataOff) + offset, err
+
+	rec, offset, err := ReadRecordAtOffsetSingleFile(bm, sst.SingleFilePath, offsets[0]+int64(dataOff), blockSize, compress, dict)
+	if err != nil {
+		return nil, 0, err
+	}
+	return rec, int(dataOff) + offset, nil
 }
 
 // SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
