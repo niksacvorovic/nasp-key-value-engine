@@ -695,8 +695,8 @@ func FindIndexBlockOffset(summary Summary, key []byte) int64 {
 	return 0
 }
 
-// Search sprovodi standardni Bloom → Summary → Index → Data redosled.
-func Search(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary,
+// SearchMultiFile sprovodi standardni Bloom → Summary → Index → Data redosled.
+func SearchMultiFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary,
 	idxBlkSize int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
 	if !sst.Filter.IsAdded(string(key)) {
 		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
@@ -969,26 +969,14 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 }
 
 // SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
-func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockManager, compress bool, dict *Dictionary) (*Record, bool) {
-	base := filepath.Base(dir)
-	var ts int64
-	if _, err := fmt.Sscanf(base, "%d-sstable", &ts); err != nil {
-		return nil, false
-	}
-
-	var sst *SSTable
-	if cfg.SSTableSingleFile {
+func SearchSSTable(sst *SSTable, key string, cfg config.Config, bm *blockmanager.BlockManager, dict *Dictionary) (*Record, bool) {
+	if sst.SingleSSTable {
 		// Pretrazi po kljucu
-		sst = NewSingleFileSSTable(filepath.Dir(dir), ts)
-		sst.SingleFilePath = filepath.Join(dir, fmt.Sprintf("%d-SSTable.db", ts))
-
-		record, _, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize, compress, dict)
+		record, _, err := SearchSingleFile(bm, sst, []byte(key), cfg.BlockSize, cfg.SSTableCompression, dict)
 		if err == nil {
 			return record, true
 		}
 	} else {
-		sst = NewMultiFileSSTable(dir, ts)
-
 		// Ucitaj summary
 		summary, err := LoadSummary(bm, sst.SummaryFilePath)
 		if err != nil {
@@ -1003,7 +991,7 @@ func SearchSSTable(dir, key string, cfg config.Config, bm *blockmanager.BlockMan
 		sst.Filter = bloom
 
 		// Pretrazi po kljucu
-		record, _, err := Search(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize, compress, dict)
+		record, _, err := SearchMultiFile(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize, cfg.SSTableCompression, dict)
 		if err == nil {
 			return record, true
 		}

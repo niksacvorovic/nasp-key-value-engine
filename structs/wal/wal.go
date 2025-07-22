@@ -130,12 +130,12 @@ func NewWAL(dirPath string, walMaxRecordsPerSegment int, walBlocksPerSegment int
 	}
 	buf := make([]byte, 0, blockSize)
 	// Čitanje broja blokova poslednjeg fajla
-	file, _ := os.OpenFile(filepath.Join(dirPath, orderedFiles[segNum]), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
+	file, _ := os.OpenFile(filepath.Join(dirPath, orderedFiles[last]), os.O_APPEND|os.O_CREATE|os.O_RDWR, 0644)
 	fileinfo, _ := file.Stat()
 	if fileinfo.Size() == 0 {
 		buf = append(buf, []byte("WAL")...)
-		buf = binary.LittleEndian.AppendUint32(buf, uint32(segNum))
-		newBM.WriteBlock(filepath.Join(dirPath, orderedFiles[segNum]), buf)
+		buf = binary.LittleEndian.AppendUint32(buf, uint32(last))
+		newBM.WriteBlock(filepath.Join(dirPath, orderedFiles[last]), buf)
 		sizes[segNum] = 1
 		newBM.Block_idx = 0
 	} else {

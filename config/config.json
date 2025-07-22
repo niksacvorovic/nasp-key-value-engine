@@ -1,6 +1,6 @@
 {
-    "MaxMemtableSize": 10,
-    "MemtableNum": 5,
+    "MaxMemtableSize": 5,
+    "MemtableNum": 2,
     "MemtableStruct": "hashMap", 
     "SkipListLevelNum": 5,
 
@@ -16,8 +16,8 @@
 
     "SummaryStep": 4,
     "SSTableSingleFile": true,
-    "SSTableCompression": true,
+    "SSTableCompression": false,
 
-    "CompactionAlgorithm":"SizeTiered",
+    "CompactionAlgorithm":"Leveled",
     "MaxCountInLevel":2
 }
