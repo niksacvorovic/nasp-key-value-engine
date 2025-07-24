@@ -422,7 +422,6 @@ func main() {
 				fmt.Println("Greška: VALIDATE ne zahteva argumente")
 				continue
 			}
-			fmt.Println("Izaberite SSTabelu za validaciju:")
 			tableIndex := 1
 			for _, level := range lsm {
 				for _, tableDir := range level {
@@ -430,6 +429,7 @@ func main() {
 					tableIndex++
 				}
 			}
+			fmt.Print("Izaberite SSTabelu za validaciju: ")
 
 			if !scanner.Scan() {
 				continue
@@ -448,11 +448,14 @@ func main() {
 						if err != nil {
 							fmt.Println("Greška u čitanju foldera!")
 						}
-						correct, err := sstable.ValidateMerkleTree(bm, sst, cfg.BlockSize)
-						if correct {
+						indices, err := sstable.ValidateMerkleTree(bm, sst, cfg.BlockSize)
+						if err != nil {
+							fmt.Println("Greška u poređenju tabele!")
+						}
+						if indices == nil {
 							fmt.Println("SSTabela je validna, nema grešaka.")
 						} else {
-							fmt.Println("Greška u validaciji:", err)
+							fmt.Println("Promene detektovane - neispravni blokovi: ", indices)
 						}
 					}
 					findTable++

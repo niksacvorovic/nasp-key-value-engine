@@ -16,6 +16,12 @@ type MerkleTree struct {
 	MerkleRoot MerkleNode
 }
 
+type IncorrentNode struct {
+	this  *MerkleNode
+	other *MerkleNode
+	index int
+}
+
 func NewMerkleTree() MerkleTree {
 	return MerkleTree{}
 }
@@ -24,23 +30,23 @@ func (mt *MerkleTree) ConstructMerkleTree(bytes []byte, blockSize int) {
 	// Generisanje listova stabla
 	leaves := make([]MerkleNode, 0)
 	for i := 0; i < len(bytes); i += blockSize {
-		chunk := bytes[i : i+blockSize]
+		chunk := bytes[i:min(i+blockSize, len(bytes)-1)]
 		hash := md5.Sum(chunk)
 		leaf := MerkleNode{hash[:], nil, nil}
 		leaves = append(leaves, leaf)
 	}
-	if len(leaves)%2 != 0 {
-		leaves = append(leaves, MerkleNode{make([]byte, 0), nil, nil})
+	if len(leaves)%2 != 0 && len(leaves) != 1 {
+		leaves = append(leaves, MerkleNode{make([]byte, 16), nil, nil})
 	}
 	// Izgradnja viših nivoa stabla
 	nextlevel := make([]MerkleNode, 0)
-	for i := 0; i < len(leaves); i += 2 {
-		newhash := md5.Sum(append(leaves[i].Hash, leaves[i+1].Hash...))
-		newnode := MerkleNode{newhash[:], &leaves[i], &leaves[i+1]}
+	for i := 1; i < len(leaves); i += 2 {
+		newhash := md5.Sum(append(leaves[i-1].Hash, leaves[i].Hash...))
+		newnode := MerkleNode{newhash[:], &leaves[i-1], &leaves[i]}
 		nextlevel = append(nextlevel, newnode)
 	}
-	if len(nextlevel)%2 != 0 {
-		nextlevel = append(nextlevel, MerkleNode{make([]byte, 0), nil, nil})
+	if len(nextlevel)%2 != 0 && len(nextlevel) != 1 {
+		nextlevel = append(nextlevel, MerkleNode{make([]byte, 16), nil, nil})
 	}
 	prevlevel := nextlevel
 	for len(prevlevel) > 1 {
@@ -49,9 +55,9 @@ func (mt *MerkleTree) ConstructMerkleTree(bytes []byte, blockSize int) {
 			newhash := md5.Sum(append(prevlevel[i].Hash, prevlevel[i+1].Hash...))
 			newnode := MerkleNode{newhash[:], &prevlevel[i], &prevlevel[i+1]}
 			nextlevel = append(nextlevel, newnode)
-			if len(nextlevel)%2 != 0 && len(nextlevel) != 1 {
-				nextlevel = append(nextlevel, MerkleNode{make([]byte, 0), nil, nil})
-			}
+		}
+		if len(nextlevel)%2 != 0 && len(nextlevel) != 1 {
+			nextlevel = append(nextlevel, MerkleNode{make([]byte, 16), nil, nil})
 		}
 		prevlevel = nextlevel
 	}
@@ -67,11 +73,7 @@ func (mt MerkleTree) Serialize() []byte {
 	i := 0
 	for len(queue) != i || i == 0 {
 		bytes = append(bytes, counter[i])
-		if len(queue[i].Hash) == 0 {
-			bytes = append(bytes, []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}...)
-		} else {
-			bytes = append(bytes, queue[i].Hash...)
-		}
+		bytes = append(bytes, queue[i].Hash...)
 		if queue[i].left != nil {
 			queue = append(queue, queue[i].left)
 			counter = append(counter, counter[i]+1)
@@ -116,24 +118,30 @@ func (mt *MerkleTree) Deserialize(bytes []byte) {
 	mt.MerkleRoot = matrix[0][0]
 }
 
-func Compare(this *MerkleTree, other *MerkleTree) (bool, int) {
-	num := 0
+func Compare(this *MerkleTree, other *MerkleTree) (bool, []int) {
 	if reflect.DeepEqual(this.MerkleRoot.Hash, other.MerkleRoot.Hash) {
-		return true, 0
+		return true, nil
 	}
-	currentThis := &this.MerkleRoot
-	currentOther := &other.MerkleRoot
-	for currentThis.left != nil && currentOther.left != nil && currentThis.right != nil && currentOther.right != nil {
-		if !reflect.DeepEqual(currentThis.left.Hash, currentOther.left.Hash) {
-			num *= 2
-			currentThis = currentThis.left
-			currentOther = currentOther.left
-		} else if !reflect.DeepEqual(currentThis.right.Hash, currentOther.right.Hash) {
-			num *= 2
-			num += 1
-			currentThis = currentThis.right
-			currentOther = currentOther.right
+	incorrectNodes := make([]IncorrentNode, 0)
+	current := IncorrentNode{this: &this.MerkleRoot, other: &other.MerkleRoot, index: 0}
+	incorrectNodes = append(incorrectNodes, current)
+	indices := make([]int, 0)
+	i := 0
+	for i != len(incorrectNodes) {
+		current = incorrectNodes[i]
+		if current.this.left == nil && current.other.left == nil && current.this.right == nil && current.other.right == nil {
+			indices = append(indices, current.index)
+		} else {
+			if !reflect.DeepEqual(current.this.left.Hash, current.other.left.Hash) {
+				incorrectLeft := IncorrentNode{this: current.this.left, other: current.other.left, index: current.index * 2}
+				incorrectNodes = append(incorrectNodes, incorrectLeft)
+			}
+			if !reflect.DeepEqual(current.this.right.Hash, current.other.right.Hash) {
+				incorrectRight := IncorrentNode{this: current.this.right, other: current.other.right, index: current.index*2 + 1}
+				incorrectNodes = append(incorrectNodes, incorrectRight)
+			}
 		}
+		i++
 	}
-	return false, num
+	return false, indices
 }

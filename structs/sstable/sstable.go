@@ -618,61 +618,35 @@ func LoadMerkleTree(bm *blockmanager.BlockManager, path string, blockSize int) (
 }
 
 // ValidateMerkleTree ponovo hashira svaki data-blok i poredi sa upisanim stablom.
-// Vraća false i indeks prvog izmenjenog bloka ukoliko se detektuje nepodudaranje.
-func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize int) (bool, error) {
-	// bs := blockSize
-	// hashes := make([][]byte, 0)
-
-	// for blkIdx := 0; ; blkIdx++ {
-	// 	blk, err := bm.ReadBlock(sst.DataFilePath, blkIdx)
-	// 	if err != nil {
-	// 		return false, err
-	// 	}
-	// 	fi, _ := os.Stat(sst.DataFilePath)
-	// 	if int64(blkIdx*bs) >= fi.Size() {
-	// 		break
-	// 	}
-	// 	if int64((blkIdx+1)*bs) > fi.Size() {
-	// 		blk = blk[:fi.Size()-int64(blkIdx*bs)]
-	// 	}
-	// 	h := md5.Sum(blk)
-	// 	hashes = append(hashes, h[:])
-	// 	if int64((blkIdx+1)*bs) >= fi.Size() {
-	// 		break
-	// 	}
-	// }
-
-	// concat := make([]byte, 0, len(hashes)*16)
-	// for _, h := range hashes {
-	// 	concat = append(concat, h...)
-	// }
+// Vraća false i indekse izmenjenih blokova ukoliko se detektuje nepodudaranje.
+func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize int) ([]int, error) {
 	var err error
 	var data []byte
 	if sst.SingleSSTable {
 		offsets, err := parseHeader(bm, sst.SingleFilePath, blockSize)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		sst.Metadata, err = LoadMerkleTreeSingleFile(bm, sst.SingleFilePath, blockSize, offsets[4], offsets[5])
 		if err != nil {
-			return false, err
+			return nil, err
 		}
-		data, err = readSegment(bm, sst.SingleFilePath, 48, int(offsets[0])-48, blockSize)
+		data, err = readSegment(bm, sst.SingleFilePath, offsets[0], int(offsets[1]-offsets[0]), blockSize)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 	} else {
 		sst.Metadata, err = LoadMerkleTree(bm, sst.SingleFilePath, blockSize)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		dataInfo, err := os.Stat(sst.DataFilePath)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		data, err = readSegment(bm, sst.DataFilePath, 0, int(dataInfo.Size()), blockSize)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 	}
 	tmp := merkletree.NewMerkleTree()
@@ -680,9 +654,9 @@ func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize i
 
 	ok, diff := merkletree.Compare(&tmp, sst.Metadata)
 	if ok {
-		return true, nil
+		return nil, nil
 	}
-	return false, fmt.Errorf("promena detektovana – prvi neispravan blok indeks %d", diff)
+	return diff, nil
 }
 
 // FindIndexBlockOffset traži offset Index bloka u Summary-ju za dati ključ.
