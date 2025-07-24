@@ -79,21 +79,21 @@ func (t *BTree) WriteElement(key string, value []byte, ts [16]byte, tombstone bo
 
 func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]byte, tombstone bool) {
 	i := len(node.Keys) - 1
-
-	if node.IsLeaf { //da li kljuc vec postoji u listu
-		for j := 0; j < len(node.Keys); j++ {
-			if key == node.Keys[j] {
-				if node.Deleted[j] && !tombstone { //ako je obrisan, ozivimo ga
-					node.Values[j] = value
-					node.Deleted[j] = false
-					node.Timestamps[j] = ts
-				} else if string(node.Values[j]) != string(value) {
-					node.Values[j] = value //zamenimo vrednost ako nije ista (URADILA I AZURIRANJE, ne skodi)
-					node.Timestamps[j] = ts
-				}
-				return
+	//da li kljuc vec postoji u listu
+	for j := 0; j < len(node.Keys); j++ {
+		if key == node.Keys[j] {
+			if node.Deleted[j] && !tombstone { //ako je obrisan, ozivimo ga
+				node.Values[j] = value
+				node.Deleted[j] = false
+				node.Timestamps[j] = ts
+			} else if string(node.Values[j]) != string(value) {
+				node.Values[j] = value //zamenimo vrednost ako nije ista (URADILA I AZURIRANJE, ne skodi)
+				node.Timestamps[j] = ts
 			}
+			return
 		}
+	}
+	if node.IsLeaf {
 		//ubacujemo novi kljuc u list
 		node.Keys = append(node.Keys, "")
 		node.Values = append(node.Values, nil)

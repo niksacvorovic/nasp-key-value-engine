@@ -61,17 +61,15 @@ func (m *BTreeMemtable) collectRecords(node *BTreeNode, records *[]memtable.Reco
 		return
 	}
 	for i := 0; i < len(node.Keys); i++ {
-		if !node.Deleted[i] {
-			*records = append(*records, memtable.Record{
-				Key:       node.Keys[i],
-				Value:     node.Values[i],
-				Timestamp: node.Timestamps[i],
-				Tombstone: false,
-			})
-		}
 		if !node.IsLeaf && i < len(node.Children) {
 			m.collectRecords(node.Children[i], records)
 		}
+		*records = append(*records, memtable.Record{
+			Key:       node.Keys[i],
+			Value:     node.Values[i],
+			Timestamp: node.Timestamps[i],
+			Tombstone: node.Deleted[i],
+		})
 	}
 	if !node.IsLeaf && len(node.Children) > len(node.Keys) {
 		m.collectRecords(node.Children[len(node.Children)-1], records)
