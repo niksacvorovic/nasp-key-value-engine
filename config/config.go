@@ -7,6 +7,7 @@ type Config struct {
 	MemtableNum      int    `json:"MemtableNum"`
 	MemtableStruct   string `json:"MemtableStruct"`
 	SkipListLevelNum int    `json:"SkipListLevelNum"`
+	BTreeDegree      int    `json:"BTreeDegree"`
 
 	// Block Manager and Block Cache
 	BlockSize      int `json:"BlockSize"`

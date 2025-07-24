@@ -1,14 +1,15 @@
 {
-    "MaxMemtableSize": 5,
+    "MaxMemtableSize": 20,
     "MemtableNum": 2,
-    "MemtableStruct": "hashMap", 
+    "MemtableStruct": "BTree", 
     "SkipListLevelNum": 5,
+    "BTreeDegree":2,
 
     "BlockSize": 128,
     "BlockCacheSize": 20,
     "LRUCacheSize":20,
 
-    "TokenRate": 10,
+    "TokenRate": 100,
     "TokenInterval": 60,
     
     "WalMaxRecordsPerSegment": 50,

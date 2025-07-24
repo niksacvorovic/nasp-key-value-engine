@@ -298,6 +298,8 @@ func (w *WAL) rotateSegment() error {
 	w.buffer = append(w.buffer, []byte("WAL")...)
 	w.buffer = binary.LittleEndian.AppendUint32(w.buffer, uint32(w.LastSeg))
 	w.bm.Block_idx = 0
+	w.bm.WriteBlock(filepath.Join(w.Dir, w.segments[w.LastSeg]), w.buffer)
+	w.bm.Block_idx = 0
 	return nil
 }
 

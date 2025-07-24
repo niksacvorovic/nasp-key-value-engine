@@ -6,8 +6,6 @@ import (
 	//"projekat/structs/memtable"
 )
 
-const degree = 3
-
 type BTreeNode struct {
 	IsLeaf     bool
 	Keys       []string
@@ -18,12 +16,13 @@ type BTreeNode struct {
 }
 
 type BTree struct {
-	Root *BTreeNode
+	Root   *BTreeNode
+	degree int
 }
 
 // ---------- KONSTRUKTOR ----------
 
-func NewBTree() *BTree {
+func NewBTree(degree int) *BTree {
 	return &BTree{
 		Root: &BTreeNode{
 			IsLeaf:     true,
@@ -33,6 +32,7 @@ func NewBTree() *BTree {
 			Timestamps: [][16]byte{},
 			Children:   []*BTreeNode{},
 		},
+		degree: degree,
 	}
 }
 
@@ -63,7 +63,7 @@ func (t *BTree) ReadElement(key string) ([]byte, error) {
 // ---------- DODAVANJE ----------
 
 func (t *BTree) WriteElement(key string, value []byte, ts [16]byte) error {
-	if len(t.Root.Keys) == 2*degree-1 { //ako je koren pun
+	if len(t.Root.Keys) == 2*t.degree-1 { //ako je koren pun
 		newRoot := &BTreeNode{
 			IsLeaf:   false,
 			Children: []*BTreeNode{t.Root}, //stari koren je dete novog
@@ -118,7 +118,7 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]
 		i++
 
 		//ako je dete puno -> ROTACIJA ili SPLIT
-		if len(node.Children[i].Keys) == 2*degree-1 {
+		if len(node.Children[i].Keys) == 2*t.degree-1 {
 			if !t.tryRotate(node, i) {
 				t.splitChild(node, i)
 				if key > node.Keys[i] {
@@ -131,68 +131,85 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]
 }
 
 // ---------- ROTACIJA ----------
-//prvo pokusavamo
 
+// leva rotacija
+func leftRotate(left, parent, child *BTreeNode, i int) {
+	// na kraj levog brata postavljamo element sa i-tog mesta
+	left.Keys = append(left.Keys, parent.Keys[i-1])
+	left.Values = append(left.Values, parent.Values[i-1])
+	left.Deleted = append(left.Deleted, parent.Deleted[i-1])
+	left.Timestamps = append(left.Timestamps, parent.Timestamps[i-1])
+	// na i-to mesto u roditelju stavljamo prvo iz deteta
+	parent.Keys[i-1] = child.Keys[0]
+	parent.Values[i-1] = child.Values[0]
+	parent.Deleted[i-1] = child.Deleted[0]
+	parent.Timestamps[i-1] = child.Timestamps[0]
+	// sa deteta uklanjamo prvi element
+	child.Keys = child.Keys[1:]
+	child.Values = child.Values[1:]
+	child.Deleted = child.Deleted[1:]
+	child.Timestamps = child.Timestamps[1:]
+}
+
+// desna rotacija
+func rightRotate(right, parent, child *BTreeNode, i int) {
+	// na početak desnog brata postavljamo element sa i-tog mesta
+	right.Keys = append([]string{parent.Keys[i]}, right.Keys...)
+	right.Values = append([][]byte{parent.Values[i]}, right.Values...)
+	right.Deleted = append([]bool{parent.Deleted[i]}, right.Deleted...)
+	right.Timestamps = append([][16]byte{parent.Timestamps[i]}, right.Timestamps...)
+	// na i-to mesto u roditelju stavljamo poslednje iz deteta
+	parent.Keys[i] = child.Keys[len(child.Keys)-1]
+	parent.Values[i] = child.Values[len(child.Values)-1]
+	parent.Deleted[i] = child.Deleted[len(child.Deleted)-1]
+	parent.Timestamps[i] = child.Timestamps[len(child.Timestamps)-1]
+	// sa deteta uklanjamo poslednji element
+	child.Keys = child.Keys[:len(child.Keys)-1]
+	child.Values = child.Values[:len(child.Values)-1]
+	child.Deleted = child.Deleted[:len(child.Deleted)-1]
+	child.Timestamps = child.Timestamps[:len(child.Timestamps)-1]
+
+}
+
+// prvo pokusavamo
 func (t *BTree) tryRotate(parent *BTreeNode, i int) bool {
 	child := parent.Children[i]
-
-	//leva rotacija, koristimo mesto u LEVOM BRATU
-	if i > 0 {
-		left := parent.Children[i-1]
-		if len(left.Keys) < 2*degree-1 {
-			//pomeri kljuc iz roditelja u dete a roditeljski kljuc popuni sa desnim kljucem iz leve brace
-			child.Keys = append([]string{parent.Keys[i-1]}, child.Keys...)
-			child.Values = append([][]byte{parent.Values[i-1]}, child.Values...)
-			child.Deleted = append([]bool{parent.Deleted[i-1]}, child.Deleted...)
-			child.Timestamps = append([][16]byte{parent.Timestamps[i-1]}, child.Timestamps...)
-
-			idx := len(left.Keys) - 1
-			parent.Keys[i-1] = left.Keys[idx]
-			parent.Values[i-1] = left.Values[idx]
-			parent.Deleted[i-1] = left.Deleted[idx]
-			parent.Timestamps[i-1] = left.Timestamps[idx]
-
-			left.Keys = left.Keys[:idx]
-			left.Values = left.Values[:idx]
-			left.Deleted = left.Deleted[:idx]
-			left.Timestamps = left.Timestamps[:idx]
-
-			if !child.IsLeaf { //ako dete nije list, pomeri i decu sa leve strane
-				child.Children = append([]*BTreeNode{left.Children[idx+1]}, child.Children...)
-				left.Children = left.Children[:idx+1]
-			}
+	var left *BTreeNode = nil
+	var right *BTreeNode = nil
+	if i != 0 {
+		left = parent.Children[i-1]
+	}
+	if i != len(parent.Children)-1 {
+		right = parent.Children[i+1]
+	}
+	if left == nil {
+		if right == nil {
+			return false
+		} else if len(right.Keys) == 2*t.degree-1 {
+			return false
+		} else {
+			rightRotate(right, parent, child, i)
 			return true
 		}
 	}
-
-	//desna rotacija, koristimo mesto u DESNOM BRATU
-	if i < len(parent.Children)-1 {
-		right := parent.Children[i+1]
-		if len(right.Keys) < 2*degree-1 {
-			child.Keys = append(child.Keys, parent.Keys[i])
-			child.Values = append(child.Values, parent.Values[i])
-			child.Deleted = append(child.Deleted, parent.Deleted[i])
-			child.Timestamps = append(child.Timestamps, parent.Timestamps[i])
-
-			parent.Keys[i] = right.Keys[0]
-			parent.Values[i] = right.Values[0]
-			parent.Deleted[i] = right.Deleted[0]
-			parent.Timestamps[i] = right.Timestamps[0]
-
-			right.Keys = right.Keys[1:]
-			right.Values = right.Values[1:]
-			right.Deleted = right.Deleted[1:]
-			right.Timestamps = right.Timestamps[1:]
-
-			if !child.IsLeaf {
-				child.Children = append(child.Children, right.Children[0])
-				right.Children = right.Children[1:]
-			}
+	if right == nil {
+		if len(left.Keys) == 2*t.degree-1 {
+			return false
+		} else {
+			leftRotate(left, parent, child, i)
 			return true
 		}
 	}
-
-	return false
+	if len(left.Keys) == 2*t.degree-1 && len(right.Keys) == 2*t.degree-1 {
+		return false
+	}
+	if len(left.Keys) <= len(right.Keys) {
+		leftRotate(left, parent, child, i)
+		return true
+	} else {
+		rightRotate(right, parent, child, i)
+		return true
+	}
 }
 
 // ---------- SPLIT ----------
@@ -200,7 +217,7 @@ func (t *BTree) tryRotate(parent *BTreeNode, i int) bool {
 
 func (t *BTree) splitChild(parent *BTreeNode, i int) {
 	full := parent.Children[i]
-	mid := degree - 1 //indeks srednjeg kljuca koji ide gore u roditalja
+	mid := t.degree - 1 //indeks srednjeg kljuca koji ide gore u roditalja
 
 	newNode := &BTreeNode{
 		IsLeaf:     full.IsLeaf,
@@ -243,7 +260,7 @@ func (t *BTree) markAsDeleted(node *BTreeNode, key string) error {
 	}
 	if i < len(node.Keys) && key == node.Keys[i] {
 		if node.Deleted[i] {
-			return errors.New("Already deleted")
+			return errors.New("already deleted")
 		}
 		node.Deleted[i] = true
 		return nil

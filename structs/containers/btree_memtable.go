@@ -13,9 +13,9 @@ type BTreeMemtable struct {
 	watermark uint32
 }
 
-func NewBTreeMemtable(maxSize int) *BTreeMemtable {
+func NewBTreeMemtable(maxSize int, degree int) *BTreeMemtable {
 	return &BTreeMemtable{
-		tree:      NewBTree(),
+		tree:      NewBTree(degree),
 		size:      0,
 		maxSize:   maxSize,
 		watermark: 0,
@@ -58,7 +58,7 @@ func (m *BTreeMemtable) Get(key string) ([]byte, bool) {
 func (m *BTreeMemtable) Flush() *[]memtable.Record {
 	records := make([]memtable.Record, 0, m.size)
 	m.collectRecords(m.tree.Root, &records)
-	m.tree = NewBTree()
+	m.tree = NewBTree(m.tree.degree)
 	m.size = 0
 	return &records
 }

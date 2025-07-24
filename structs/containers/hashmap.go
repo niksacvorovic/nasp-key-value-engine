@@ -37,10 +37,12 @@ func (m *HashMapMemtable) IsFull() bool {
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
 func (m *HashMapMemtable) Delete(key string) error {
-	if _, exists := m.data[key]; !exists {
+	if record, exists := m.data[key]; !exists {
 		return fmt.Errorf("kljuc %s ne postoji u Memtable-u", key)
+	} else {
+		record.Tombstone = true
+		m.data[key] = record
 	}
-	delete(m.data, key)
 	return nil
 }
 
