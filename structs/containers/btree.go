@@ -62,28 +62,28 @@ func (t *BTree) ReadElement(key string) ([]byte, error) {
 
 // ---------- DODAVANJE ----------
 
-func (t *BTree) WriteElement(key string, value []byte, ts [16]byte) error {
+func (t *BTree) WriteElement(key string, value []byte, ts [16]byte, tombstone bool) error {
 	if len(t.Root.Keys) == 2*t.degree-1 { //ako je koren pun
 		newRoot := &BTreeNode{
 			IsLeaf:   false,
 			Children: []*BTreeNode{t.Root}, //stari koren je dete novog
 		}
-		t.splitChild(newRoot, 0)                 //podeli puno dete
-		t.insertNonFull(newRoot, key, value, ts) //ubacujemo kljuc u novi koren ili potomke
+		t.splitChild(newRoot, 0)                            //podeli puno dete
+		t.insertNonFull(newRoot, key, value, ts, tombstone) //ubacujemo kljuc u novi koren ili potomke
 		t.Root = newRoot
 	} else {
-		t.insertNonFull(t.Root, key, value, ts)
+		t.insertNonFull(t.Root, key, value, ts, tombstone)
 	}
 	return nil
 }
 
-func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]byte) {
+func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]byte, tombstone bool) {
 	i := len(node.Keys) - 1
 
 	if node.IsLeaf { //da li kljuc vec postoji u listu
 		for j := 0; j < len(node.Keys); j++ {
 			if key == node.Keys[j] {
-				if node.Deleted[j] { //ako je obrisan, ozivimo ga
+				if node.Deleted[j] && !tombstone { //ako je obrisan, ozivimo ga
 					node.Values[j] = value
 					node.Deleted[j] = false
 					node.Timestamps[j] = ts
@@ -109,7 +109,7 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]
 		}
 		node.Keys[i+1] = key
 		node.Values[i+1] = value
-		node.Deleted[i+1] = false
+		node.Deleted[i+1] = tombstone
 		node.Timestamps[i+1] = ts
 	} else { //ako nije list, gledamo u koje dete ulazimo
 		for i >= 0 && key < node.Keys[i] {
@@ -126,7 +126,7 @@ func (t *BTree) insertNonFull(node *BTreeNode, key string, value []byte, ts [16]
 				}
 			}
 		}
-		t.insertNonFull(node.Children[i], key, value, ts)
+		t.insertNonFull(node.Children[i], key, value, ts, tombstone)
 	}
 }
 
@@ -249,26 +249,22 @@ func (t *BTree) splitChild(parent *BTreeNode, i int) {
 
 // ---------- DELETE - logicko ----------
 
-func (t *BTree) DeleteElement(key string) error {
-	return t.markAsDeleted(t.Root, key)
-}
-
-func (t *BTree) markAsDeleted(node *BTreeNode, key string) error {
+func (t *BTree) MarkAsDeleted(node *BTreeNode, key string) bool {
 	i := 0
 	for i < len(node.Keys) && key > node.Keys[i] {
 		i++
 	}
 	if i < len(node.Keys) && key == node.Keys[i] {
 		if node.Deleted[i] {
-			return errors.New("already deleted")
+			return false
 		}
 		node.Deleted[i] = true
-		return nil
+		return true
 	}
 	if node.IsLeaf {
-		return errors.New("Key not found")
+		return false
 	}
-	return t.markAsDeleted(node.Children[i], key)
+	return t.MarkAsDeleted(node.Children[i], key)
 }
 
 // InOrderTraversal vraca sve zapise sortirano

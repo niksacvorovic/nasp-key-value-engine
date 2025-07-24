@@ -398,15 +398,15 @@ func main() {
 
 			// Izbrisi iz WAL-a i Memtable-a
 			if found {
-				_, err = walInstance.AppendRecord(tombstone, key, value)
+				ts, err := walInstance.AppendRecord(tombstone, key, value)
 				if err != nil {
 					fmt.Printf("Greška prilikom brisanja iz WAL-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 				} else {
-					err := memtableInstances[delIndex].Delete(parts[1])
-					if err != nil {
-						fmt.Printf("Greška prilikom brisanja iz Memtable-a: %v\n", err)
-					} else {
+					deleted := memtableInstances[delIndex].Delete(parts[1])
+					if deleted {
 						fmt.Printf("Uspešno izbrisano iz WAL-a Memtable-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
+					} else {
+						memtableInstances[mtIndex].Add(ts, true, parts[1], []byte(parts[2]))
 					}
 				}
 			} else {

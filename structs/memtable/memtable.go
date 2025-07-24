@@ -18,7 +18,7 @@ type Record struct {
 // MemtableInterface definise zajednicki interfejs za sve implementacije Memtable-a
 type MemtableInterface interface {
 	Add(ts [16]byte, tombstone bool, key string, value []byte) error
-	Delete(key string) error
+	Delete(key string) bool
 	Get(key string) ([]byte, bool)
 	SetWatermark(index uint32)
 	GetWatermark() uint32

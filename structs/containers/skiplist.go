@@ -141,7 +141,7 @@ func (sl *SkipList) WriteElement(ts [16]byte, tombstone bool, str string, value 
 	return true
 }
 
-func (sl *SkipList) DeleteElement(str string) error {
+func (sl *SkipList) DeleteElement(str string) bool {
 	current := &sl.levels[sl.maxHeight-1]
 	for {
 		if current.Record.Key == str {
@@ -169,9 +169,9 @@ func (sl *SkipList) DeleteElement(str string) error {
 			current.Record.Tombstone = true
 			current.Record.Value = []byte{}
 		}
-		return nil
+		return true
 	} else {
-		return errors.New("nonexistent value")
+		return false
 	}
 }
 
@@ -195,12 +195,8 @@ func (m *SkipListMemtable) Add(ts [16]byte, tombstone bool, key string, value []
 	return nil
 }
 
-func (m *SkipListMemtable) Delete(key string) error {
-	err := m.data.DeleteElement(key)
-	if err != nil {
-		return err
-	}
-	return nil
+func (m *SkipListMemtable) Delete(key string) bool {
+	return m.data.DeleteElement(key)
 }
 
 func (m *SkipListMemtable) Get(key string) ([]byte, bool) {

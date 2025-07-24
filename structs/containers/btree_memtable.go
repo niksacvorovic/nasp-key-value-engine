@@ -23,17 +23,10 @@ func NewBTreeMemtable(maxSize int, degree int) *BTreeMemtable {
 }
 
 func (m *BTreeMemtable) Add(ts [16]byte, tombstone bool, key string, value []byte) error {
-	if m.IsFull() {
-		return memtable.ErrMemtableFull
-	}
-	if tombstone {
-		return m.tree.DeleteElement(key)
-	}
-	//ako postoji ne povecavamo size
 	_, err := m.tree.ReadElement(key)
 	isNew := err != nil
 
-	err = m.tree.WriteElement(key, value, ts)
+	err = m.tree.WriteElement(key, value, ts, tombstone)
 	if err != nil {
 		return err
 	}
@@ -43,8 +36,8 @@ func (m *BTreeMemtable) Add(ts [16]byte, tombstone bool, key string, value []byt
 	return nil
 }
 
-func (m *BTreeMemtable) Delete(key string) error {
-	return m.tree.DeleteElement(key)
+func (m *BTreeMemtable) Delete(key string) bool {
+	return m.tree.MarkAsDeleted(m.tree.Root, key)
 }
 
 func (m *BTreeMemtable) Get(key string) ([]byte, bool) {

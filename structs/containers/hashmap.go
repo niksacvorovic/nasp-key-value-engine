@@ -1,7 +1,6 @@
 package containers
 
 import (
-	"fmt"
 	"sort"
 
 	"projekat/structs/cursor"
@@ -36,14 +35,14 @@ func (m *HashMapMemtable) IsFull() bool {
 }
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
-func (m *HashMapMemtable) Delete(key string) error {
+func (m *HashMapMemtable) Delete(key string) bool {
 	if record, exists := m.data[key]; !exists {
-		return fmt.Errorf("kljuc %s ne postoji u Memtable-u", key)
+		return false
 	} else {
 		record.Tombstone = true
 		m.data[key] = record
+		return true
 	}
-	return nil
 }
 
 // Get dohvata vrednost prema kljucu iz HashMapMemtable-a
