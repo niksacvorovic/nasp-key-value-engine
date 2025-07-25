@@ -850,6 +850,209 @@ func main() {
 			}
 			fmt.Println("Count-Min Sketch obrisan:", name)
 
+		// -----------------------------------
+		// HYPERLOGLOG
+		// -----------------------------------
+
+		case "HLL_CREATE":
+			if len(parts) != 3 {
+				fmt.Println("Greska: HLL_CREATE zahteva <ime> <precision>")
+				continue
+			}
+
+			name := parts[1]
+			precision, err := strconv.ParseUint(parts[2], 10, 8)
+			if err != nil || precision < 4 || precision > 16 {
+				fmt.Println("Greska: Precision mora biti broj između 4 i 16")
+				continue
+			}
+
+			key := "__sys__prob__hll__" + name
+			hll := probabilistic.CreateHLL(uint8(precision))
+			value := hll.Serialize()
+
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("HLL instanca kreirana:", name)
+
+		case "HLL_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Greska: HLL_ADD zahteva <ime> <element>")
+				continue
+			}
+
+			name := parts[1]
+			elem := parts[2]
+			key := "__sys__prob__hll__" + name
+
+			var data []byte
+			var found, deleted bool
+
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
+
+			if !found || deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSSTHLL1:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, sstableDir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(sstableDir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSSTHLL1
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("HLL nije pronadjen.")
+				continue
+			}
+
+			hll := &probabilistic.HyperLogLog{}
+			err := hll.Deserialize(data)
+			if err != nil {
+				fmt.Println("Greska pri deserijalizaciji HLL:", err)
+				continue
+			}
+
+			hll.Add(elem)
+			value := hll.Serialize()
+
+			var ts [16]byte
+			ts, err = walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("Element dodat u HLL:", elem)
+
+		case "HLL_COUNT":
+			if len(parts) != 2 {
+				fmt.Println("Greska: HLL_COUNT zahteva <ime>")
+				continue
+			}
+
+			name := parts[1]
+			key := "__sys__prob__hll__" + name
+
+			var data []byte
+			var found, deleted bool
+
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
+
+			if !found || deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSSTHLL2:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, sstableDir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(sstableDir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSSTHLL2
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("HLL nije pronadjen.")
+				continue
+			}
+
+			hll := &probabilistic.HyperLogLog{}
+			err := hll.Deserialize(data)
+			if err != nil {
+				fmt.Println("Greska pri deserijalizaciji HLL:", err)
+				continue
+			}
+
+			fmt.Printf("Procenjena kardinalnost: %.0f\n", hll.Estimate())
+
+		case "HLL_DELETE":
+			if len(parts) != 2 {
+				fmt.Println("Greska: HLL_DELETE zahteva <ime>")
+				continue
+			}
+
+			name := parts[1]
+			key := "__sys__prob__hll__" + name
+
+			ts, err := walInstance.AppendRecord(true, []byte(key), nil)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, true, key, nil, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("HLL obrisan:", name)
+
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
 		// --------------------------------------------------------------------------------------------------------------------------
