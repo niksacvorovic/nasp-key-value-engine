@@ -43,7 +43,7 @@ func BoolToByte(b bool) byte {
 }
 
 // ConvertMemToSST konvertuje podatke iz Memtable u SSTable format
-func ConvertMemToSST(mt *MemtableInterface) []sstable.Record {
+func ConvertMemToSST(mt *MemtableInterface) *[]sstable.Record {
 	records := (*mt).Flush()
 	sstRecords := make([]sstable.Record, 0, len(*records))
 	for _, r := range *records {
@@ -56,5 +56,5 @@ func ConvertMemToSST(mt *MemtableInterface) []sstable.Record {
 			Timestamp: r.Timestamp,
 		})
 	}
-	return sstRecords
+	return &sstRecords
 }

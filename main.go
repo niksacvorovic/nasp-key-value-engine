@@ -243,45 +243,15 @@ func main() {
 				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
 				fmt.Printf("Greška pri pisanju u WAL: %v\n", err)
 			} else {
-				memtableInstances[mtIndex].Add(ts, tombstone, parts[1], value)
-				memtableInstances[mtIndex].SetWatermark(walInstance.LastSeg)
-				// Proveravamo da li je trenutni memtable popunjen
-				if memtableInstances[mtIndex].IsFull() {
-					fmt.Println("Dostignuta maksimalna veličina Memtable-a, prelazim na sledeći...")
-					mtIndex = (mtIndex + 1) % cfg.MemtableNum
-					// Ako je i sledeći memtable pun - svi su puni
-					// Flushujemo memtable i stavljamo njegov sadržaj u SSTable
-					if memtableInstances[mtIndex].IsFull() {
-						// Low watermark provera za brisanje WALa
-						// Brišemo sve WAL segmente između trenutno najstarijeg i watermarka
-						watermark := memtableInstances[mtIndex].GetWatermark()
-						for i := walInstance.FirstSeg; i < watermark; i++ {
-							deletePath := walInstance.GetSegmentFilename(i)
-							err := os.Remove(filepath.Join(walDir, deletePath))
-							if err != nil {
-								fmt.Printf("Greška pri brisanju WAL segmenata")
-							}
-						}
-						walInstance.FirstSeg = watermark
-						fmt.Println("Prevodim sadržaj Memtable-a u SSTable")
-						sstrecords := memtable.ConvertMemToSST(&memtableInstances[mtIndex])
+				sstrecords := utils.WriteToMemory(ts, tombstone, parts[1], value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
 
-						_, newSSTdir, err := sstable.CreateSSTable(sstrecords, sstableDir, cfg.SummaryStep, bm, cfg.BlockSize, 0, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
-						if err != nil {
-							fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
-						}
-						lsm[0] = append(lsm[0], newSSTdir)
-						// Funkcija za proveru i izvršenje kompakcija
-						switch cfg.CompactionAlgorithm {
-						case "SizeTiered":
-							sstable.SizeTieredCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
-						case "Leveled":
-							sstable.LeveledCompaction(bm, &lsm, sstableDir, cfg.MaxCountInLevel,
-								cfg.BlockSize, cfg.SummaryStep, cfg.SSTableSingleFile, cfg.SSTableCompression, dict, dictPath)
-						}
+				if sstrecords != nil {
+					err := utils.WriteToDisk(sstrecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+					if err != nil {
+						fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 					}
 				}
+
 				// Ako je upis u WAL uspesan, dodaje se u Memtable
 				fmt.Printf("Uspešno dodato: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 			}

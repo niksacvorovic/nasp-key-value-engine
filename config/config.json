@@ -1,7 +1,7 @@
 {
-    "MaxMemtableSize": 20,
+    "MaxMemtableSize": 5,
     "MemtableNum": 2,
-    "MemtableStruct": "BTree", 
+    "MemtableStruct": "hashMap", 
     "SkipListLevelNum": 5,
     "BTreeDegree":2,
 
@@ -19,6 +19,6 @@
     "SSTableSingleFile": true,
     "SSTableCompression": false,
 
-    "CompactionAlgorithm":"Leveled",
+    "CompactionAlgorithm":"SizeTiered",
     "MaxCountInLevel":2
 }
