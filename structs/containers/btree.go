@@ -40,6 +40,9 @@ func NewBTree(degree int) *BTree {
 
 func (n *BTreeNode) search(key string) ([]byte, bool, bool) {
 	i := 0
+	if len(n.Keys) == 0 {
+		return nil, false, false
+	}
 	for i < len(n.Keys) && key > n.Keys[i] {
 		i++
 	}

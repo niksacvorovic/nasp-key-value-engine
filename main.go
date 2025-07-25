@@ -243,6 +243,12 @@ func main() {
 				// Ako dodje do greske prilikom upisa u WAL, ispisuje se poruka o gresci
 				fmt.Printf("Greška pri pisanju u WAL: %v\n", err)
 			} else {
+				for i := range memtableInstances {
+					_, _, exists = memtableInstances[i].Get(parts[1])
+					if exists {
+						memtableInstances[i].Add(ts, tombstone, parts[1], value)
+					}
+				}
 				sstrecords := utils.WriteToMemory(ts, tombstone, parts[1], value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
 
 				if sstrecords != nil {
@@ -381,7 +387,7 @@ func main() {
 				fmt.Printf("Ključ [%s] je obrisan u Memtable\n", utils.MaybeQuote(string(key)))
 			} else {
 				// Zapis je potencijalno u SSTable - zapisujemo njegovo brisanje
-				sstrecords := utils.WriteToMemory(ts, tombstone, parts[1], value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+				sstrecords := utils.WriteToMemory(ts, tombstone, parts[1], []byte{}, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
 				if sstrecords != nil {
 					err := utils.WriteToDisk(sstrecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
 					if err != nil {
