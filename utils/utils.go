@@ -77,6 +77,12 @@ func MaybeQuote(s string) string {
 
 func WriteToMemory(ts [16]byte, tombstone bool, key string, value []byte, bm *blockmanager.BlockManager,
 	memtables *[]memtable.MemtableInterface, mtIndex *int, wal *wal.WAL, mtnum int) *[]sstable.Record {
+	for i := range *memtables {
+		_, _, exists := (*memtables)[i].Get(key)
+		if exists {
+			(*memtables)[i].Add(ts, tombstone, key, value)
+		}
+	}
 	(*memtables)[*mtIndex].Add(ts, tombstone, key, value)
 	(*memtables)[*mtIndex].SetWatermark(wal.LastSeg)
 	// Proveravamo da li je trenutni memtable popunjen
