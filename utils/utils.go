@@ -84,6 +84,7 @@ func WriteToMemory(ts [16]byte, tombstone bool, key string, value []byte, bm *bl
 		}
 	}
 	(*memtables)[*mtIndex].Add(ts, tombstone, key, value)
+	fmt.Printf("Uspešno dodato: [%s -> %s]\n", MaybeQuote(string(key)), MaybeQuote(string(value)))
 	(*memtables)[*mtIndex].SetWatermark(wal.LastSeg)
 	// Proveravamo da li je trenutni memtable popunjen
 	if (*memtables)[*mtIndex].IsFull() {
