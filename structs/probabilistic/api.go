@@ -5,10 +5,17 @@ import (
 	"errors"
 )
 
-// interfejs koristi samo Add i Get, da ne uvozimo ceo memtable
-// ovo je da se ne bi medjusobno ukljucivali
+// interfejs koristimo samo u load fjama, za ucitavaje iz memtable i sstable
+// add pise u memtable koristeci timestamp
 type SimpleKV interface {
 	Add(ts [16]byte, tombstone bool, key string, value []byte) error
+	Get(key string) ([]byte, bool, bool)
+}
+
+// interfejs za pun write path append je za wal, vraca timestamp
+type FullKV interface {
+	Add(ts [16]byte, tombstone bool, key string, value []byte) error
+	Append(tombstone bool, key string, value []byte) ([16]byte, error)
 	Get(key string) ([]byte, bool, bool)
 }
 
@@ -18,10 +25,14 @@ func internalKey(prefix, name string) string {
 
 //// ========== BLOOM FILTER ==========
 
-func SaveBloom(name string, bf *BloomFilter, mt SimpleKV) error {
+func SaveBloom(name string, bf *BloomFilter, kv FullKV) error {
 	key := internalKey("bf", name)
 	value := bf.Serialize()
-	return mt.Add([16]byte{}, false, key, value)
+	ts, err := kv.Append(false, key, value) //zapisem u wal
+	if err != nil {
+		return err
+	}
+	return kv.Add(ts, false, key, value) // tek onda memtable
 }
 
 func LoadBloom(name string, mt SimpleKV) (*BloomFilter, error) {
@@ -37,10 +48,14 @@ func LoadBloom(name string, mt SimpleKV) (*BloomFilter, error) {
 
 //// ========== COUNT MIN SKETCH ==========
 
-func SaveCMS(name string, cms *CountMinSketch, mt SimpleKV) error {
+func SaveCMS(name string, cms *CountMinSketch, kv FullKV) error {
 	key := internalKey("cms", name)
 	value := cms.Serialize()
-	return mt.Add([16]byte{}, false, key, value)
+	ts, err := kv.Append(false, key, value)
+	if err != nil {
+		return err
+	}
+	return kv.Add(ts, false, key, value)
 }
 
 func LoadCMS(name string, mt SimpleKV) (*CountMinSketch, error) {
@@ -80,10 +95,14 @@ func (cms *CountMinSketch) DeserializeFromBytes(data []byte) error {
 
 //// ========== HYPERLOGLOG ==========
 
-func SaveHLL(name string, hll *HyperLogLog, mt SimpleKV) error {
+func SaveHLL(name string, hll *HyperLogLog, kv FullKV) error {
 	key := internalKey("hll", name)
 	value := hll.Serialize()
-	return mt.Add([16]byte{}, false, key, value)
+	ts, err := kv.Append(false, key, value)
+	if err != nil {
+		return err
+	}
+	return kv.Add(ts, false, key, value)
 }
 
 func LoadHLL(name string, mt SimpleKV) (*HyperLogLog, error) {
@@ -114,11 +133,15 @@ func (hll *HyperLogLog) Deserialize(data []byte) error {
 
 //// ========== SIMHASH ==========
 
-func SaveSimhash(name string, sim uint64, mt SimpleKV) error {
+func SaveSimhash(name string, sim uint64, kv FullKV) error {
 	key := internalKey("sim", name)
-	b := make([]byte, 8)
-	binary.BigEndian.PutUint64(b, sim)
-	return mt.Add([16]byte{}, false, key, b)
+	value := make([]byte, 8)
+	binary.BigEndian.PutUint64(value, sim)
+	ts, err := kv.Append(false, key, value)
+	if err != nil {
+		return err
+	}
+	return kv.Add(ts, false, key, value)
 }
 
 func LoadSimhash(name string, mt SimpleKV) (uint64, error) {
