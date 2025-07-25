@@ -251,9 +251,6 @@ func main() {
 						fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 					}
 				}
-
-				// Ako je upis u WAL uspesan, dodaje se u Memtable
-				fmt.Printf("Uspešno dodato: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
@@ -273,15 +270,15 @@ func main() {
 			}
 			key := parts[1]
 
-			var found bool
+			var found bool = false
 			var deleted bool
 			var value []byte
+			var record *sstable.Record
 
 			// Pretrazi Memtable
 			for i := 0; i < cfg.MemtableNum; i++ {
 				value, deleted, found = memtableInstances[i].Get(key)
 				if found && !deleted {
-					// fmt.Println("memtable")
 					fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 					// Zapis u keš
 					lru.UpdateCache(key, value)
@@ -295,7 +292,6 @@ func main() {
 			// Pretrazi Cache
 			value, found = lru.CheckCache(key)
 			if found {
-				// fmt.Println("cache")
 				fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 				continue
 			}
@@ -307,14 +303,17 @@ func main() {
 					maxLevel = level
 				}
 			}
-			record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+			record = utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 			if record != nil {
 				found = true
 				fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
 			}
+			if found {
+				continue
+			}
 
 			if !found {
-				fmt.Printf("Nije pronadjena vrednost za kljuc: [%s]\n", utils.MaybeQuote(key))
+				fmt.Printf("Nije pronadjena vrednost za kljucc: [%s]\n", utils.MaybeQuote(key))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
