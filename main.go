@@ -20,6 +20,7 @@ import (
 	"projekat/structs/cursor"
 	"projekat/structs/lrucache"
 	"projekat/structs/memtable"
+	"projekat/structs/probabilistic"
 	"projekat/structs/sstable"
 	"projekat/structs/wal"
 
@@ -441,161 +442,211 @@ func main() {
 				}
 			}
 
-		// ========== PROBABILISTIC ==========
+		// ================================ PROBABILISTIC ================================
 
-		// case "BLOOM_CREATE":
-		// 	if len(parts) != 4 {
-		// 		fmt.Println("Upotreba: BLOOM_CREATE <naziv> <očekivani_broj_elemenata> <stopa_greške>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	expected, _ := strconv.Atoi(parts[2])
-		// 	fpRate, _ := strconv.ParseFloat(parts[3], 64)
-		// 	bf := probabilistic.CreateBF(expected, fpRate)
-		// 	probabilistic.SaveBloom(name, &bf, memtableInstances[0])
-		// 	fmt.Println("Bloom filter uspešno kreiran.")
+		// -----------------------------------
+		// BLOOM FILTER
+		// -----------------------------------
 
-		// case "BLOOM_ADD":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: BLOOM_ADD <naziv> <element>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	elem := parts[2]
-		// 	bf, err := probabilistic.LoadBloom(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greska:", err)
-		// 		continue
-		// 	}
-		// 	bf.AddElement(elem)
-		// 	probabilistic.SaveBloom(name, bf, memtableInstances[0])
-		// 	fmt.Println("Element uspešno dodat u Bloom filter.")
+		case "BLOOM_CREATE":
+			if len(parts) != 4 {
+				fmt.Println("Greska: BLOOM_CREATE zahteva <ime> <ocekivani_broj> <greska>")
+				continue
+			}
 
-		// case "BLOOM_CHECK":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: BLOOM_CHECK <naziv> <element>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	elem := parts[2]
-		// 	bf, err := probabilistic.LoadBloom(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greska:", err)
-		// 		continue
-		// 	}
-		// 	if bf.IsAdded(elem) {
-		// 		fmt.Println("Element je moguće prisutan.")
-		// 	} else {
-		// 		fmt.Println("Element definitivno nije prisutan.")
-		// 	}
+			name := parts[1]
+			expected, err1 := strconv.Atoi(parts[2])
+			fpRate, err2 := strconv.ParseFloat(parts[3], 64)
+			if err1 != nil || err2 != nil {
+				fmt.Println("Greska: nevalidni brojevi")
+				continue
+			}
 
-		// case "CMS_CREATE":
-		// 	if len(parts) != 4 {
-		// 		fmt.Println("Upotreba: CMS_CREATE <naziv> <epsilon> <delta>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	epsilon, _ := strconv.ParseFloat(parts[2], 64)
-		// 	delta, _ := strconv.ParseFloat(parts[3], 64)
-		// 	cms := probabilistic.CreateCountMinSketch(epsilon, delta)
-		// 	probabilistic.SaveCMS(name, &cms, memtableInstances[0])
-		// 	fmt.Println("CMS kreiran.")
+			key := "__sys__prob__bf__" + name
+			bf := probabilistic.CreateBF(expected, fpRate)
+			value := bf.Serialize()
 
-		// case "CMS_ADD":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: CMS_ADD <naziv> <događaj>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	event := parts[2]
-		// 	cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greška:", err)
-		// 		continue
-		// 	}
-		// 	cms.Add(event)
-		// 	probabilistic.SaveCMS(name, cms, memtableInstances[0])
-		// 	fmt.Println("Događaj dodat u CMS.")
+			// WAL
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
 
-		// case "CMS_COUNT":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: CMS_COUNT <naziv> <događaj>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	event := parts[2]
-		// 	cms, err := probabilistic.LoadCMS(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greška:", err)
-		// 		continue
-		// 	}
-		// 	count := cms.FindCount(event)
-		// 	fmt.Printf("Broj ponavljanja za %s: %d\n", event, count)
+			// Memtable
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Printf("Greska pri kreiranju SSTable: %v\n", err)
+				}
+			}
 
-		// case "HLL_CREATE":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: HLL_CREATE <naziv> <preciznost>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	precision, _ := strconv.Atoi(parts[2])
-		// 	hll := probabilistic.CreateHLL(uint8(precision))
-		// 	probabilistic.SaveHLL(name, &hll, memtableInstances[0])
-		// 	fmt.Println("HLL kreiran.")
+			fmt.Println("Bloom filter kreiran:", name)
 
-		// case "HLL_ADD":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: HLL_ADD <naziv> <element>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	elem := parts[2]
-		// 	hll, err := probabilistic.LoadHLL(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greska:", err)
-		// 		continue
-		// 	}
-		// 	hll.Add(elem)
-		// 	probabilistic.SaveHLL(name, hll, memtableInstances[0])
-		// 	fmt.Println("Element dodat u HLL.")
+		case "BLOOM_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Greska: BLOOM_ADD zahteva <ime> <element>")
+				continue
+			}
 
-		// case "HLL_COUNT":
-		// 	if len(parts) != 2 {
-		// 		fmt.Println("Upotreba: HLL_COUNT <naziv>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	hll, err := probabilistic.LoadHLL(name, memtableInstances[0])
-		// 	if err != nil {
-		// 		fmt.Println("Greška:", err)
-		// 		continue
-		// 	}
-		// 	fmt.Println("Kardinalitet:", int(hll.Estimate()))
+			name := parts[1]
+			elem := parts[2]
+			key := "__sys__prob__bf__" + name
 
-		// case "SIMHASH_ADD":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: SIMHASH_ADD <naziv> <tekst>")
-		// 		continue
-		// 	}
-		// 	name := parts[1]
-		// 	text := parts[2]
-		// 	weights := probabilistic.GetWordWeights(text)
-		// 	sim := probabilistic.ComputeSimhash(weights)
-		// 	probabilistic.SaveSimhash(name, sim, memtableInstances[0])
-		// 	fmt.Println("Fingerprint sacuvan.")
+			// 1. pokusaj da prositas iz Memtable
+			var data []byte
+			var found bool
+			var deleted bool
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
 
-		// case "SIMHASH_DIST":
-		// 	if len(parts) != 3 {
-		// 		fmt.Println("Upotreba: SIMHASH_DIST <naziv1> <naziv2>")
-		// 		continue
-		// 	}
-		// 	s1, err1 := probabilistic.LoadSimhash(parts[1], memtableInstances[0])
-		// 	s2, err2 := probabilistic.LoadSimhash(parts[2], memtableInstances[0])
-		// 	if err1 != nil || err2 != nil {
-		// 		fmt.Println("Greška pri učitavanju fingerprinta")
-		// 		continue
-		// 	}
-		// 	fmt.Printf("Hamming udaljenost: %d\n", probabilistic.HammingDistance(s1, s2))
+			// 2. ako nije u memtable, idi u SSTable
+			if !found || deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSST:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, dir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(dir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSST
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("Greska: Bloom filter nije pronadjn.")
+				continue
+			}
+
+			bf := &probabilistic.BloomFilter{}
+			bf.Deserialize(data)
+			bf.AddElement(elem)
+			value := bf.Serialize()
+
+			// WAL
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			// Memtable
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Printf("Greska pri kreiranju SSTable: %v\n", err)
+				}
+			}
+
+			fmt.Println("Element dodat u Bloom filter.")
+
+		case "BLOOM_CHECK":
+			if len(parts) != 3 {
+				fmt.Println("Greska: BLOOM_CHECK zahteva <ime> <element>")
+				continue
+			}
+
+			name := parts[1]
+			elem := parts[2]
+			key := "__sys__prob__bf__" + name
+
+			var data []byte
+			var found bool
+			var deleted bool
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
+
+			if (!found || deleted) && !deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSST2:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, dir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(dir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSST2
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("Bloom filter nije pronadjen.")
+				continue
+			}
+
+			bf := &probabilistic.BloomFilter{}
+			bf.Deserialize(data)
+			if bf.IsAdded(elem) {
+				fmt.Println("Element verovatno postoji.")
+			} else {
+				fmt.Println("Element sigurno ne postoji.")
+			}
+
+		case "BLOOM_DELETE":
+			if len(parts) != 2 {
+				fmt.Println("Greska: BLOOM_DELETE zahteva <ime>")
+				continue
+			}
+
+			name := parts[1]
+			key := "__sys__prob__bf__" + name
+
+			ts, err := walInstance.AppendRecord(true, []byte(key), nil)
+			if err != nil {
+				fmt.Println("Greska prilikom upisa u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, true, key, nil, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("Bloom filter obrisan:", name)
 
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
