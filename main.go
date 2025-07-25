@@ -648,6 +648,208 @@ func main() {
 
 			fmt.Println("Bloom filter obrisan:", name)
 
+		// -----------------------------------
+		// COUNT-MIN SKETCH
+		// -----------------------------------
+
+		case "CMS_CREATE":
+			if len(parts) != 4 {
+				fmt.Println("Greska: CMS_CREATE zahteva <ime> <epsilon> <delta>")
+				continue
+			}
+
+			name := parts[1]
+			epsilon, err1 := strconv.ParseFloat(parts[2], 64)
+			delta, err2 := strconv.ParseFloat(parts[3], 64)
+			if err1 != nil || err2 != nil {
+				fmt.Println("Greska: Nevalidni parametri")
+				continue
+			}
+
+			key := "__sys__prob__cms__" + name
+			cms := probabilistic.CreateCountMinSketch(epsilon, delta)
+			value := cms.Serialize()
+
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("Count-Min Sketch kreiran:", name)
+
+		case "CMS_ADD":
+			if len(parts) != 3 {
+				fmt.Println("Greska: CMS_ADD zahteva <ime> <element>")
+				continue
+			}
+
+			name := parts[1]
+			elem := parts[2]
+			key := "__sys__prob__cms__" + name
+
+			var data []byte
+			var found bool
+			var deleted bool
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
+
+			if !found || deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSSTCMS1:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, sstableDir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(sstableDir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSSTCMS1
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("Count-Min Sketch nije pronadjen.")
+				continue
+			}
+
+			cms := &probabilistic.CountMinSketch{}
+			err := cms.DeserializeFromBytes(data)
+			if err != nil {
+				fmt.Println("Greska pri deserijalizaciji CMS:", err)
+				continue
+			}
+			cms.Add(elem)
+			value := cms.Serialize()
+
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisnju SSTable:", err)
+				}
+			}
+
+			fmt.Println("Element dodat u CMS:", elem)
+
+		case "CMS_COUNT":
+			if len(parts) != 3 {
+				fmt.Println("Greska: CMS_COUNT zahteva <ime> <element>")
+				continue
+			}
+
+			name := parts[1]
+			elem := parts[2]
+			key := "__sys__prob__cms__" + name
+
+			var data []byte
+			var found bool
+			var deleted bool
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data, deleted, found = memtableInstances[i].Get(key)
+				if found {
+					break
+				}
+			}
+
+			if !found || deleted {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSSTCMS2:
+				for level := byte(0); level <= maxLevel; level++ {
+					sstableDirs, exists := lsm[level]
+					if !exists {
+						continue
+					}
+					for _, sstableDir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(sstableDir)
+						if err != nil {
+							continue
+						}
+						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
+						if ok {
+							data = record.Value
+							break LoopSSTCMS2
+						}
+					}
+				}
+			}
+
+			if data == nil {
+				fmt.Println("Count-Min Sketch nije pronadjen.")
+				continue
+			}
+
+			cms := &probabilistic.CountMinSketch{}
+			err := cms.DeserializeFromBytes(data)
+			if err != nil {
+				fmt.Println("Greska pri deserijalizaciji CMS:", err)
+				continue
+			}
+
+			count := cms.FindCount(elem)
+			fmt.Printf("Element '%s' se pojavljuje otprilike %d puta\n", elem, count)
+
+		case "CMS_DELETE":
+			if len(parts) != 2 {
+				fmt.Println("Greska: CMS_DELETE zahteva <ime>")
+				continue
+			}
+
+			name := parts[1]
+			key := "__sys__prob__cms__" + name
+
+			ts, err := walInstance.AppendRecord(true, []byte(key), nil)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+			sstRecords := utils.WriteToMemory(ts, true, key, nil, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+			fmt.Println("Count-Min Sketch obrisan:", name)
+
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
 		// --------------------------------------------------------------------------------------------------------------------------
