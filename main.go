@@ -180,7 +180,7 @@ func main() {
 		// Kontrola pristupa
 		// Token bucket će se uvek čuvati u prvoj slobodnoj memtabeli pri pokretanju
 		if command == "GET" || command == "PUT" || command == "DELETE" {
-			bucket, ok := memtableInstances[tokenIndex].Get("__sys__TOKEN_BUCKET")
+			bucket, _, ok := memtableInstances[tokenIndex].Get("__sys__TOKEN_BUCKET")
 			if !ok {
 				newtimestamp := uint64(time.Now().Unix())
 				newtokens := uint8(cfg.TokenRate)
@@ -278,8 +278,8 @@ func main() {
 
 			// Pretrazi Memtable
 			for i := 0; i < cfg.MemtableNum; i++ {
-				value, found = memtableInstances[i].Get(key)
-				if found {
+				value, deleted, found := memtableInstances[i].Get(key)
+				if found && !deleted {
 					// fmt.Println("memtable")
 					fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
 					// Zapis u keš
@@ -354,10 +354,11 @@ func main() {
 			key := []byte(parts[1])
 
 			var value []byte
+			var deleted bool
 			var found bool
 			delIndex := 0
 			for delIndex < cfg.MemtableNum {
-				value, found = memtableInstances[delIndex].Get(parts[1])
+				value, deleted, found = memtableInstances[delIndex].Get(parts[1])
 				if found {
 					break
 				} else {
@@ -367,20 +368,28 @@ func main() {
 			tombstone := true
 
 			// Izbrisi iz WAL-a i Memtable-a
-			if found {
-				ts, err := walInstance.AppendRecord(tombstone, key, value)
-				if err != nil {
-					fmt.Printf("Greška prilikom brisanja iz WAL-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
-				} else {
-					deleted := memtableInstances[delIndex].Delete(parts[1])
-					if deleted {
-						fmt.Printf("Uspešno izbrisano iz WAL-a Memtable-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
-					} else {
-						memtableInstances[mtIndex].Add(ts, true, parts[1], []byte(parts[2]))
+			ts, err := walInstance.AppendRecord(tombstone, key, value)
+			if err != nil {
+				fmt.Printf("Greška prilikom brisanja iz WAL-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
+			}
+			if found && !deleted {
+				deleted := memtableInstances[delIndex].Delete(parts[1])
+				if deleted {
+					fmt.Printf("Uspešno izbrisano iz Memtable-a: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
+				}
+			} else if found && deleted {
+				fmt.Printf("Ključ [%s] je obrisan u Memtable\n", utils.MaybeQuote(string(key)))
+			} else {
+				// Zapis je potencijalno u SSTable - zapisujemo njegovo brisanje
+				sstrecords := utils.WriteToMemory(ts, tombstone, parts[1], value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+				if sstrecords != nil {
+					err := utils.WriteToDisk(sstrecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+					if err != nil {
+						fmt.Printf("Greška pri kreiranju SSTable: %v\n", err)
 					}
 				}
-			} else {
 				fmt.Printf("Ključ nije pronađen: [%s]\n", utils.MaybeQuote(string(key)))
+				fmt.Printf("Brisanje evidentirano u sistemu: [%s -> %s]\n", utils.MaybeQuote(string(key)), utils.MaybeQuote(string(value)))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------

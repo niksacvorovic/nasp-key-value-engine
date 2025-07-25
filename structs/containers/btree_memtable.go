@@ -23,8 +23,8 @@ func NewBTreeMemtable(maxSize int, degree int) *BTreeMemtable {
 }
 
 func (m *BTreeMemtable) Add(ts [16]byte, tombstone bool, key string, value []byte) error {
-	_, err := m.tree.ReadElement(key)
-	isNew := err != nil
+	_, del, err := m.tree.ReadElement(key)
+	isNew := err != nil && !del
 
 	err = m.tree.WriteElement(key, value, ts, tombstone)
 	if err != nil {
@@ -40,12 +40,10 @@ func (m *BTreeMemtable) Delete(key string) bool {
 	return m.tree.MarkAsDeleted(m.tree.Root, key)
 }
 
-func (m *BTreeMemtable) Get(key string) ([]byte, bool) {
-	val, err := m.tree.ReadElement(key)
-	if err != nil {
-		return []byte{}, false
-	}
-	return val, true
+func (m *BTreeMemtable) Get(key string) ([]byte, bool, bool) {
+	val, del, err := m.tree.ReadElement(key)
+
+	return val, del, err == nil
 }
 
 func (m *BTreeMemtable) Flush() *[]memtable.Record {

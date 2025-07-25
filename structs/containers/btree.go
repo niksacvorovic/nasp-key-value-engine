@@ -38,26 +38,26 @@ func NewBTree(degree int) *BTree {
 
 // ---------- PRETRAGA ----------
 
-func (n *BTreeNode) search(key string) ([]byte, bool) {
+func (n *BTreeNode) search(key string) ([]byte, bool, bool) {
 	i := 0
 	for i < len(n.Keys) && key > n.Keys[i] {
 		i++
 	}
 	if i < len(n.Keys) && key == n.Keys[i] && !n.Deleted[i] {
-		return n.Values[i], true
+		return n.Values[i], n.Deleted[i], true
 	}
 	if n.IsLeaf {
-		return nil, false
+		return nil, false, false
 	}
 	return n.Children[i].search(key)
 }
 
-func (t *BTree) ReadElement(key string) ([]byte, error) {
-	val, ok := t.Root.search(key)
+func (t *BTree) ReadElement(key string) ([]byte, bool, error) {
+	val, del, ok := t.Root.search(key)
 	if !ok {
-		return nil, errors.New("Key not found")
+		return nil, del, errors.New("Key not found")
 	}
-	return val, nil
+	return val, del, nil
 }
 
 // ---------- DODAVANJE ----------

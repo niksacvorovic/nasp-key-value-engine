@@ -9,7 +9,7 @@ import (
 // ovo je da se ne bi medjusobno ukljucivali
 type SimpleKV interface {
 	Add(ts [16]byte, tombstone bool, key string, value []byte) error
-	Get(key string) ([]byte, bool)
+	Get(key string) ([]byte, bool, bool)
 }
 
 func internalKey(prefix, name string) string {
@@ -26,8 +26,8 @@ func SaveBloom(name string, bf *BloomFilter, mt SimpleKV) error {
 
 func LoadBloom(name string, mt SimpleKV) (*BloomFilter, error) {
 	key := internalKey("bf", name)
-	data, ok := mt.Get(key)
-	if !ok {
+	data, del, ok := mt.Get(key)
+	if !ok || del {
 		return nil, errors.New("ne postoji BloomFilter sa tim imenom")
 	}
 	bf := &BloomFilter{}
@@ -45,8 +45,8 @@ func SaveCMS(name string, cms *CountMinSketch, mt SimpleKV) error {
 
 func LoadCMS(name string, mt SimpleKV) (*CountMinSketch, error) {
 	key := internalKey("cms", name)
-	data, ok := mt.Get(key)
-	if !ok {
+	data, del, ok := mt.Get(key)
+	if !ok || del {
 		return nil, errors.New("ne postoji CountMinSketch sa tim imenom")
 	}
 	cms := &CountMinSketch{}
@@ -88,8 +88,8 @@ func SaveHLL(name string, hll *HyperLogLog, mt SimpleKV) error {
 
 func LoadHLL(name string, mt SimpleKV) (*HyperLogLog, error) {
 	key := internalKey("hll", name)
-	data, ok := mt.Get(key)
-	if !ok {
+	data, del, ok := mt.Get(key)
+	if !ok || del {
 		return nil, errors.New("ne postoji HyperLogLog sa tim imenom")
 	}
 	hll := &HyperLogLog{}
@@ -123,8 +123,8 @@ func SaveSimhash(name string, sim uint64, mt SimpleKV) error {
 
 func LoadSimhash(name string, mt SimpleKV) (uint64, error) {
 	key := internalKey("sim", name)
-	data, ok := mt.Get(key)
-	if !ok {
+	data, del, ok := mt.Get(key)
+	if !ok || del {
 		return 0, errors.New("ne postoji SimHash sa tim imenom")
 	}
 	return binary.BigEndian.Uint64(data), nil

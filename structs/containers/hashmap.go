@@ -46,9 +46,12 @@ func (m *HashMapMemtable) Delete(key string) bool {
 }
 
 // Get dohvata vrednost prema kljucu iz HashMapMemtable-a
-func (m *HashMapMemtable) Get(key string) ([]byte, bool) {
+func (m *HashMapMemtable) Get(key string) ([]byte, bool, bool) {
 	record, exists := m.data[key]
-	return record.Value, exists
+	if exists {
+		return record.Value, record.Tombstone, exists
+	}
+	return []byte{}, false, exists
 }
 
 // SerializeToSSTable serijalizuje podatke iz Memtable-a u SSTable

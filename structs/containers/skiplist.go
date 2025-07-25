@@ -59,7 +59,7 @@ func CreateSL(maxHeight int) *SkipList {
 	}
 }
 
-func (sl *SkipList) ReadElement(str string) ([]byte, error) {
+func (sl *SkipList) ReadElement(str string) (memtable.Record, error) {
 	current := &sl.levels[sl.maxHeight-1]
 	for {
 		if current.Record.Key == str {
@@ -79,10 +79,10 @@ func (sl *SkipList) ReadElement(str string) ([]byte, error) {
 			current = current.Next
 		}
 	}
-	if current.Record.Key == str && !current.Record.Tombstone {
-		return current.Record.Value, nil
+	if current.Record.Key == str {
+		return current.Record, nil
 	} else {
-		return current.Record.Value, errors.New("nonexistent value")
+		return current.Record, errors.New("nonexistent value")
 	}
 
 }
@@ -199,12 +199,12 @@ func (m *SkipListMemtable) Delete(key string) bool {
 	return m.data.DeleteElement(key)
 }
 
-func (m *SkipListMemtable) Get(key string) ([]byte, bool) {
-	value, exists := m.data.ReadElement(key)
+func (m *SkipListMemtable) Get(key string) ([]byte, bool, bool) {
+	record, exists := m.data.ReadElement(key)
 	if exists == nil {
-		return value, true
+		return record.Value, record.Tombstone, true
 	}
-	return []byte{}, false
+	return []byte{}, false, false
 }
 func (m *SkipListMemtable) Flush() *[]memtable.Record {
 	records := make([]memtable.Record, 0, m.size)

@@ -133,6 +133,10 @@ func Compaction(tables []*SSTable, blockSize int, bm *blockmanager.BlockManager,
 				cursors[i]++
 			}
 		}
+		// Zapisi koji su obrisani se preskaču - fizičko brisanje
+		if nextRecord.Tombstone {
+			continue
+		}
 		sortedRecords = append(sortedRecords, *nextRecord)
 	}
 	compacted, sstDir, err := CreateSSTable(sortedRecords, dir, step, bm, blockSize, lsm, single, compress, dict, dictPath)

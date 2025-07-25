@@ -19,7 +19,7 @@ type Record struct {
 type MemtableInterface interface {
 	Add(ts [16]byte, tombstone bool, key string, value []byte) error
 	Delete(key string) bool
-	Get(key string) ([]byte, bool)
+	Get(key string) ([]byte, bool, bool)
 	SetWatermark(index uint32)
 	GetWatermark() uint32
 	Flush() *[]Record
