@@ -20,5 +20,5 @@
     "SSTableCompression": false,
 
     "CompactionAlgorithm":"SizeTiered",
-    "MaxCountInLevel":2
+    "MaxCountInLevel":5
 }

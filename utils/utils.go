@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -136,4 +137,45 @@ func WriteToDisk(sstrecords *[]sstable.Record, sstableDir string, bm *blockmanag
 	}
 	fmt.Println("SSTable uspešno kreiran!")
 	return nil
+}
+
+func ReadFromDisk(key string, maxLevel byte, lsm map[byte][]string, cfg config.Config,
+	bm *blockmanager.BlockManager, dict *sstable.Dictionary) *sstable.Record {
+	records := make([]*sstable.Record, 0)
+Loop:
+	for level := byte(0); level <= maxLevel; level++ {
+		sstableDirs, exists := lsm[level]
+		if !exists {
+			continue
+		}
+
+		for _, dir := range sstableDirs {
+			table, err := sstable.ReadTableFromDir(dir)
+			if err != nil {
+				fmt.Println("Greška u čitanju foldera SSTabele")
+			}
+			record, found := sstable.SearchSSTable(table, key, cfg, bm, dict)
+			if found {
+				records = append(records, record)
+				// u leveled kompakciji podatak se pojavljuje samo jednom u nivou
+				if cfg.CompactionAlgorithm == "Leveled" {
+					continue Loop
+				}
+			}
+		}
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	retIndex := 0
+	for i, rec := range records {
+		// vraćamo zapis sa najnovijim timestampom
+		if binary.LittleEndian.Uint64(rec.Timestamp[:8]) > binary.LittleEndian.Uint64(records[retIndex].Timestamp[:8]) {
+			retIndex = i
+		}
+	}
+	if records[retIndex].Tombstone {
+		return nil
+	}
+	return records[retIndex]
 }

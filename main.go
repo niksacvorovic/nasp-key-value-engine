@@ -307,26 +307,10 @@ func main() {
 					maxLevel = level
 				}
 			}
-
-		Loop:
-			for level := byte(0); level <= maxLevel; level++ {
-				sstableDirs, exists := lsm[level]
-				if !exists {
-					continue
-				}
-
-				for _, dir := range sstableDirs {
-					table, err := sstable.ReadTableFromDir(dir)
-					if err != nil {
-						fmt.Println("Greška u čitanju foldera SSTabele")
-					}
-					record, found := sstable.SearchSSTable(table, key, cfg, bm, dict)
-					if found {
-						// fmt.Println("sstable")
-						fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
-						break Loop
-					}
-				}
+			record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+			if record != nil {
+				found = true
+				fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
 			}
 
 			if !found {
@@ -514,23 +498,9 @@ func main() {
 					}
 				}
 
-			LoopSST:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, dir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(dir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSST
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -590,23 +560,9 @@ func main() {
 					}
 				}
 
-			LoopSST2:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, dir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(dir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSST2
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -714,23 +670,9 @@ func main() {
 					}
 				}
 
-			LoopSSTCMS1:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, sstableDir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(sstableDir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSSTCMS1
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -792,23 +734,9 @@ func main() {
 					}
 				}
 
-			LoopSSTCMS2:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, sstableDir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(sstableDir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSSTCMS2
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -915,23 +843,9 @@ func main() {
 					}
 				}
 
-			LoopSSTHLL1:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, sstableDir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(sstableDir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSSTHLL1
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -994,23 +908,9 @@ func main() {
 					}
 				}
 
-			LoopSSTHLL2:
-				for level := byte(0); level <= maxLevel; level++ {
-					sstableDirs, exists := lsm[level]
-					if !exists {
-						continue
-					}
-					for _, sstableDir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(sstableDir)
-						if err != nil {
-							continue
-						}
-						record, ok := sstable.SearchSSTable(table, key, cfg, bm, dict)
-						if ok {
-							data = record.Value
-							break LoopSSTHLL2
-						}
-					}
+				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
+				if record != nil {
+					data = record.Value
 				}
 			}
 
@@ -1134,39 +1034,18 @@ func main() {
 					}
 				}
 
-			LoopSim1:
-				for level := byte(0); level <= maxLevel && (!found1 || deleted1); level++ {
-					sstableDirs := lsm[level]
-					for _, dir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(dir)
-						if err != nil {
-							continue
-						}
-						rec, ok := sstable.SearchSSTable(table, key1, cfg, bm, dict)
-						if ok {
-							data1 = rec.Value
-							found1 = true
-							deleted1 = rec.Tombstone
-							break LoopSim1
-						}
+				if !found1 || deleted1 {
+					record1 := utils.ReadFromDisk(key1, maxLevel, lsm, cfg, bm, dict)
+					if record1 != nil {
+						data1 = record1.Value
 					}
+
 				}
 
-			LoopSim2:
-				for level := byte(0); level <= maxLevel && (!found2 || deleted2); level++ {
-					sstableDirs := lsm[level]
-					for _, dir := range sstableDirs {
-						table, err := sstable.ReadTableFromDir(dir)
-						if err != nil {
-							continue
-						}
-						rec, ok := sstable.SearchSSTable(table, key2, cfg, bm, dict)
-						if ok {
-							data2 = rec.Value
-							found2 = true
-							deleted2 = rec.Tombstone
-							break LoopSim2
-						}
+				if !found2 || deleted2 {
+					record1 := utils.ReadFromDisk(key1, maxLevel, lsm, cfg, bm, dict)
+					if record1 != nil {
+						data1 = record1.Value
 					}
 				}
 			}
