@@ -1053,6 +1053,135 @@ func main() {
 
 			fmt.Println("HLL obrisan:", name)
 
+		// -----------------------------------
+		// SIMHASH
+		// -----------------------------------
+
+		case "SIMHASH_CREATE":
+			if len(parts) != 3 {
+				fmt.Println("Greska: SIMHASH_CREATE zahteva <ime> <putanja_do_fajla>")
+				continue
+			}
+
+			name := parts[1]
+			filepath := parts[2]
+			text, err := probabilistic.ReadFile(filepath)
+			if err != nil {
+				fmt.Println("Greska pri citanju fajla:", err)
+				continue
+			}
+
+			wordWeights := probabilistic.GetWordWeights(text)
+			fingerprint := probabilistic.ComputeSimhash(wordWeights)
+
+			// Serijalizacija i zapis
+			value := make([]byte, 8)
+			binary.BigEndian.PutUint64(value, fingerprint)
+			key := "__sys__prob__sim__" + name
+
+			ts, err := walInstance.AppendRecord(false, []byte(key), value)
+			if err != nil {
+				fmt.Println("Greska pri pisanju u WAL:", err)
+				continue
+			}
+
+			sstRecords := utils.WriteToMemory(ts, false, key, value, bm, &memtableInstances, &mtIndex, walInstance, cfg.MemtableNum)
+			if sstRecords != nil {
+				err := utils.WriteToDisk(sstRecords, sstableDir, bm, &lsm, cfg, dict, dictPath)
+				if err != nil {
+					fmt.Println("Greska pri pisanju SSTable:", err)
+				}
+			}
+
+			fmt.Println("SimHash fingerprint sačuvan pod imenom:", name)
+
+		case "SIMHASH_DISTANCE":
+			if len(parts) != 3 {
+				fmt.Println("Greska: SIMHASH_DISTANCE zahteva <ime1> <ime2>")
+				continue
+			}
+
+			name1 := parts[1]
+			name2 := parts[2]
+
+			key1 := "__sys__prob__sim__" + name1
+			key2 := "__sys__prob__sim__" + name2
+
+			var data1, data2 []byte
+			var found1, found2 bool
+			var deleted1, deleted2 bool
+
+			// Prvo memtable pretraga
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data1, deleted1, found1 = memtableInstances[i].Get(key1)
+				if found1 && !deleted1 {
+					break
+				}
+			}
+			for i := 0; i < cfg.MemtableNum; i++ {
+				data2, deleted2, found2 = memtableInstances[i].Get(key2)
+				if found2 && !deleted2 {
+					break
+				}
+			}
+
+			// Ako nije nadjeno, idi u SSTable
+			if (!found1 || deleted1) || (!found2 || deleted2) {
+				maxLevel := byte(0)
+				for level := range lsm {
+					if level > maxLevel {
+						maxLevel = level
+					}
+				}
+
+			LoopSim1:
+				for level := byte(0); level <= maxLevel && (!found1 || deleted1); level++ {
+					sstableDirs := lsm[level]
+					for _, dir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(dir)
+						if err != nil {
+							continue
+						}
+						rec, ok := sstable.SearchSSTable(table, key1, cfg, bm, dict)
+						if ok {
+							data1 = rec.Value
+							found1 = true
+							deleted1 = rec.Tombstone
+							break LoopSim1
+						}
+					}
+				}
+
+			LoopSim2:
+				for level := byte(0); level <= maxLevel && (!found2 || deleted2); level++ {
+					sstableDirs := lsm[level]
+					for _, dir := range sstableDirs {
+						table, err := sstable.ReadTableFromDir(dir)
+						if err != nil {
+							continue
+						}
+						rec, ok := sstable.SearchSSTable(table, key2, cfg, bm, dict)
+						if ok {
+							data2 = rec.Value
+							found2 = true
+							deleted2 = rec.Tombstone
+							break LoopSim2
+						}
+					}
+				}
+			}
+
+			if data1 == nil || data2 == nil {
+				fmt.Println("Greska: Jedan od SimHash fingerprint-a nije pronadjen.")
+				continue
+			}
+
+			hash1 := binary.BigEndian.Uint64(data1)
+			hash2 := binary.BigEndian.Uint64(data2)
+
+			dist := probabilistic.HammingDistance(hash1, hash2)
+			fmt.Printf("Hamming distanca izmedju '%s' i '%s' je: %d\n", name1, name2, dist)
+
 		// --------------------------------------------------------------------------------------------------------------------------
 		// PREFIX_SCAN komanda
 		// --------------------------------------------------------------------------------------------------------------------------
