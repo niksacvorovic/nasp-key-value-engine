@@ -208,7 +208,7 @@ func (m *SkipListMemtable) Get(key string) ([]byte, bool, bool) {
 }
 func (m *SkipListMemtable) Flush() *[]memtable.Record {
 	records := make([]memtable.Record, 0, m.size)
-	current := &m.data.levels[m.data.maxHeight-1]
+	current := &m.data.levels[0]
 	for current.Next != nil {
 		current = current.Next
 		records = append(records, current.Record)

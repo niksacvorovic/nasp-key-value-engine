@@ -143,7 +143,6 @@ func WriteToDisk(sstrecords *[]sstable.Record, sstableDir string, bm *blockmanag
 func ReadFromDisk(key string, maxLevel byte, lsm map[byte][]string, cfg config.Config,
 	bm *blockmanager.BlockManager, dict *sstable.Dictionary) *sstable.Record {
 	records := make([]*sstable.Record, 0)
-Loop:
 	for level := byte(0); level <= maxLevel; level++ {
 		sstableDirs, exists := lsm[level]
 		if !exists {
@@ -159,8 +158,9 @@ Loop:
 			if found {
 				records = append(records, record)
 				// u leveled kompakciji podatak se pojavljuje samo jednom u nivou
+				// podatak u najvišem nivou je ujedno i najnoviji - možemo ga vratiti odmah
 				if cfg.CompactionAlgorithm == "Leveled" {
-					continue Loop
+					return record
 				}
 			}
 		}
