@@ -1399,22 +1399,67 @@ func main() {
 			// Napravi jedan multi cursor kao wrapper svih cursora
 			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
 
-			// Iterate petlja
-		outer_prefix:
-			for {
-				mc.Next()
+			// Prikupi sve zapise
+			records := make(map[string]struct {
+				value []byte
+				ts    [16]byte
+			})
+
+			for mc.Next() {
 				key := mc.Key()
-
 				if key == "" {
-					break
-				}
-
-				// Preskoci izbrisane kljuceve
-				if mc.Tombstone() {
 					continue
 				}
 
-				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
+				// Preskoci ako je izbrisano
+				if mc.Tombstone() {
+					delete(records, key)
+					continue
+				}
+
+				// Sacuvaj samo najnoviju verziju
+				currTS := mc.Timestamp()
+				if existing, ok := records[key]; ok {
+					if bytes.Compare(currTS[:], existing.ts[:]) > 0 {
+						// Novi zapis ima veci timestamp, azuriraj
+						records[key] = struct {
+							value []byte
+							ts    [16]byte
+						}{
+							value: mc.Value(),
+							ts:    currTS,
+						}
+					}
+				} else {
+					// Ne postoji u records, samo dodaj
+					records[key] = struct {
+						value []byte
+						ts    [16]byte
+					}{
+						value: mc.Value(),
+						ts:    currTS,
+					}
+				}
+			}
+			mc.Close() // Zatvori multicursor jer smo vec procitali sve podatke
+
+			// Sortiraj kljuceve
+			sortedKeys := make([]string, 0, len(records))
+			for k := range records {
+				if k >= minKey && k <= maxKey {
+					sortedKeys = append(sortedKeys, k)
+				}
+			}
+			sort.Strings(sortedKeys)
+
+			// Iterate petlja koja koristi vec ucitane zapise
+			currentIndex := 0
+		outer_prefix:
+			for currentIndex < len(sortedKeys) {
+				key := sortedKeys[currentIndex]
+				record := records[key]
+
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(record.value)))
 				fmt.Print("Naredba (NEXT/STOP): ")
 
 				// Citanje linije iz inputa
@@ -1434,6 +1479,7 @@ func main() {
 					break outer_prefix
 				case "NEXT":
 					// Predji na sledeci element
+					currentIndex++
 				default:
 					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}
@@ -1478,22 +1524,67 @@ func main() {
 			// Napravi jedan multi cursor kao wrapper svih cursora
 			mc := cursor.NewMultiCursor(minKey, maxKey, cursors...)
 
-			// Iterate petlja
-		outer_range:
-			for {
-				mc.Next()
+			// Prikupi sve zapise
+			records := make(map[string]struct {
+				value []byte
+				ts    [16]byte
+			})
+
+			for mc.Next() {
 				key := mc.Key()
-
 				if key == "" {
-					break
-				}
-
-				// Preskoci izbrisane kljuceve
-				if mc.Tombstone() {
 					continue
 				}
 
-				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(mc.Value())))
+				// Preskoci ako je izbrisano
+				if mc.Tombstone() {
+					delete(records, key)
+					continue
+				}
+
+				// Sacuvaj samo najnoviju verziju
+				currTS := mc.Timestamp()
+				if existing, ok := records[key]; ok {
+					if bytes.Compare(currTS[:], existing.ts[:]) > 0 {
+						// Novi zapis ima veci timestamp, azuriraj
+						records[key] = struct {
+							value []byte
+							ts    [16]byte
+						}{
+							value: mc.Value(),
+							ts:    currTS,
+						}
+					}
+				} else {
+					// Ne postoji u records, samo dodaj
+					records[key] = struct {
+						value []byte
+						ts    [16]byte
+					}{
+						value: mc.Value(),
+						ts:    currTS,
+					}
+				}
+			}
+			mc.Close() // Zatvori multicursor jer smo vec procitali sve podatke
+
+			// Sortiraj kljuceve
+			sortedKeys := make([]string, 0, len(records))
+			for k := range records {
+				if k >= minKey && k <= maxKey {
+					sortedKeys = append(sortedKeys, k)
+				}
+			}
+			sort.Strings(sortedKeys)
+
+			// Iterate petlja koja koristi vec ucitane zapise
+			currentIndex := 0
+		outer_range:
+			for currentIndex < len(sortedKeys) {
+				key := sortedKeys[currentIndex]
+				record := records[key]
+
+				fmt.Printf("- [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(record.value)))
 				fmt.Print("Naredba (NEXT/STOP): ")
 
 				// Citanje linije iz inputa
@@ -1513,6 +1604,7 @@ func main() {
 					break outer_range
 				case "NEXT":
 					// Predji na sledeci element
+					currentIndex++
 				default:
 					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}

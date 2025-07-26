@@ -144,11 +144,17 @@ func (c *HashMapCursor) Key() string {
 
 // Getter za vrijednost
 func (c *HashMapCursor) Value() []byte {
+	if c.current < 0 || c.current >= len(c.keys) {
+		return nil
+	}
 	return c.memtable.data[c.keys[c.current]].Value
 }
 
 // Getter za timestamp
 func (c *HashMapCursor) Timestamp() [16]byte {
+	if c.current < 0 || c.current >= len(c.keys) {
+		return [16]byte{}
+	}
 	return c.memtable.data[c.keys[c.current]].Timestamp
 }
 
