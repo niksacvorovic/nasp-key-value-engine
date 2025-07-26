@@ -180,3 +180,14 @@ Loop:
 	}
 	return records[retIndex]
 }
+
+// Komande koje trose tokene (sve sem HELP i EXIT)
+var CommandsWithTokens = map[string]bool{
+	"GET": true, "PUT": true, "DELETE": true,
+	"PREFIX_SCAN": true, "RANGE_SCAN": true,
+	"PREFIX_ITERATE": true, "RANGE_ITERATE": true,
+	"BLOOM_CREATE": true, "BLOOM_ADD": true, "BLOOM_CHECK": true,
+	"CMS_CREATE": true, "CMS_ADD": true, "CMS_COUNT": true,
+	"HLL_CREATE": true, "HLL_ADD": true, "HLL_COUNT": true,
+	"SIMHASH_ADD": true, "SIMHASH_DIST": true,
+}

@@ -179,7 +179,7 @@ func main() {
 
 		// Kontrola pristupa
 		// Token bucket će se uvek čuvati u prvoj slobodnoj memtabeli pri pokretanju
-		if command == "GET" || command == "PUT" || command == "DELETE" {
+		if utils.CommandsWithTokens[command] {
 			bucket, _, ok := memtableInstances[tokenIndex].Get("__sys__TOKEN_BUCKET")
 			if !ok {
 				newtimestamp := uint64(time.Now().Unix())
