@@ -75,28 +75,28 @@ func (sc *SSTableCursor) Next() bool {
 }
 
 func (sc *SSTableCursor) Key() string {
-	if sc.current != nil {
+	if sc.current == nil {
 		return ""
 	}
 	return string(sc.current.Key)
 }
 
 func (sc *SSTableCursor) Value() []byte {
-	if sc.current != nil {
+	if sc.current == nil {
 		return nil
 	}
 	return sc.current.Value
 }
 
 func (sc *SSTableCursor) Timestamp() [16]byte {
-	if sc.current != nil {
+	if sc.current == nil {
 		return [16]byte{}
 	}
 	return sc.current.Timestamp
 }
 
 func (sc *SSTableCursor) Tombstone() bool {
-	if sc.current != nil {
+	if sc.current == nil {
 		return false
 	}
 	return sc.current.Tombstone
@@ -104,4 +104,7 @@ func (sc *SSTableCursor) Tombstone() bool {
 
 func (sc *SSTableCursor) Close() {
 	sc.offset = -1
+	sc.current = nil
+	sc.bm = nil
+	sc.sst = nil
 }
