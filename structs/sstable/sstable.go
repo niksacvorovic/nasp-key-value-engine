@@ -507,9 +507,9 @@ func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, 
 	}
 }
 
-// ReadIndexBlock čita jedan blok (fixed size) iz Index fajla i parsira sve unose.
-func ReadIndexBlock(bm *blockmanager.BlockManager, path string, blkSize int64, offs int64, blockSize int) ([]Index, error) {
-	buf, err := readSegment(bm, path, offs, int(blkSize), blockSize)
+// ReadIndexBlock čita Index i parsira sve unose.
+func ReadIndexBlock(bm *blockmanager.BlockManager, path string, offs int64, length int64, blockSize int) ([]Index, error) {
+	buf, err := readSegment(bm, path, offs, int(length), blockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -660,18 +660,20 @@ func ValidateMerkleTree(bm *blockmanager.BlockManager, sst *SSTable, blockSize i
 }
 
 // FindIndexBlockOffset traži offset Index bloka u Summary-ju za dati ključ.
-func FindIndexBlockOffset(summary Summary, key []byte) int64 {
+func FindIndexBlockOffset(summary Summary, key []byte, indexBound int64) (int64, int64) {
+	bound := indexBound
 	for i := len(summary.Entries) - 1; i >= 0; i-- {
 		if bytes.Compare(summary.Entries[i].Key, key) <= 0 {
-			return int64(summary.Entries[i].Offset)
+			return int64(summary.Entries[i].Offset), bound
 		}
+		bound = int64(summary.Entries[i].Offset)
 	}
-	return 0
+	return 0, bound
 }
 
 // SearchMultiFile sprovodi standardni Bloom → Summary → Index → Data redosled.
 func SearchMultiFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, summary Summary,
-	idxBlkSize int64, blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
+	blockSize int, compress bool, dict *Dictionary) (*Record, int, error) {
 	if !sst.Filter.IsAdded(string(key)) {
 		return nil, 0, fmt.Errorf("key not found (Bloom filter)")
 	}
@@ -679,8 +681,14 @@ func SearchMultiFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, su
 		return nil, 0, fmt.Errorf("key outside summary range")
 	}
 
-	idxOff := FindIndexBlockOffset(summary, key)
-	indices, err := ReadIndexBlock(bm, sst.IndexFilePath, idxBlkSize, idxOff, blockSize)
+	indexInfo, err := os.Stat(sst.IndexFilePath)
+	if err != nil {
+		return nil, 0, err
+	}
+	idxOff, bound := FindIndexBlockOffset(summary, key, indexInfo.Size())
+	indexLen := bound - idxOff
+
+	indices, err := ReadIndexBlock(bm, sst.IndexFilePath, idxOff, indexLen, blockSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -912,12 +920,11 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 		return nil, 0, fmt.Errorf("key outside summary range")
 	}
 
-	idxOff := FindIndexBlockOffset(summary, key)
-	indexStart := offsets[1] + idxOff
-	indexEnd := offsets[2]
-	indexLen := indexEnd - indexStart
+	idxOff, bound := FindIndexBlockOffset(summary, key, offsets[2])
+	indexLen := bound - idxOff
+	idxOff += offsets[1]
 
-	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, indexStart, indexLen, blockSize)
+	indices, err := ReadIndexBlockSingleFile(bm, sst.SingleFilePath, idxOff, indexLen, blockSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -942,7 +949,7 @@ func SearchSingleFile(bm *blockmanager.BlockManager, sst *SSTable, key []byte, b
 	return rec, int(dataOff) + offset, nil
 }
 
-// SeatchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i Search funkcije
+// SearchSSTable je pomocna funkcija koja wrappuje SearchSingleFile i SearchMultiFile funkcije
 func SearchSSTable(sst *SSTable, key string, cfg config.Config, bm *blockmanager.BlockManager, dict *Dictionary) (*Record, bool) {
 	if sst.SingleSSTable {
 		// Pretrazi po kljucu
@@ -965,7 +972,7 @@ func SearchSSTable(sst *SSTable, key string, cfg config.Config, bm *blockmanager
 		sst.Filter = bloom
 
 		// Pretrazi po kljucu
-		record, _, err := SearchMultiFile(bm, sst, []byte(key), summary, int64(cfg.BlockSize), cfg.BlockSize, cfg.SSTableCompression, dict)
+		record, _, err := SearchMultiFile(bm, sst, []byte(key), summary, cfg.BlockSize, cfg.SSTableCompression, dict)
 		if err == nil {
 			return record, true
 		}

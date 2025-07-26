@@ -1091,25 +1091,7 @@ func main() {
 			sstableCursors := make([]cursor.Cursor, 0)
 			for _, level := range lsm {
 				for _, path := range level {
-					sst, err := sstable.ReadTableFromDir(path)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
-						continue
-					}
-					var newOffset int
-					for _, entry := range sum.Entries {
-						if string(entry.Key) > minKey {
-							break
-						}
-						newOffset = int(entry.Offset)
-					}
-					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					newCursor, err := sstable.NewCursor(bm, path, minKey, maxKey, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
 						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
@@ -1226,25 +1208,7 @@ func main() {
 			sstableCursors := make([]cursor.Cursor, 0)
 			for _, level := range lsm {
 				for _, path := range level {
-					sst, err := sstable.ReadTableFromDir(path)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
-						continue
-					}
-					var newOffset int
-					for _, entry := range sum.Entries {
-						if string(entry.Key) > minKey {
-							break
-						}
-						newOffset = int(entry.Offset)
-					}
-					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					newCursor, err := sstable.NewCursor(bm, path, minKey, maxKey, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
 						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
@@ -1355,25 +1319,7 @@ func main() {
 			sstableCursors := make([]cursor.Cursor, 0)
 			for _, level := range lsm {
 				for _, path := range level {
-					sst, err := sstable.ReadTableFromDir(path)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
-						continue
-					}
-					var newOffset int
-					for _, entry := range sum.Entries {
-						if string(entry.Key) > minKey {
-							break
-						}
-						newOffset = int(entry.Offset)
-					}
-					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					newCursor, err := sstable.NewCursor(bm, path, minKey, maxKey, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
 						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
@@ -1452,25 +1398,7 @@ func main() {
 			sstableCursors := make([]cursor.Cursor, 0)
 			for _, level := range lsm {
 				for _, path := range level {
-					sst, err := sstable.ReadTableFromDir(path)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					sum, err := sstable.ReadSummaryFromTable(sst, bm, cfg.BlockSize)
-					if err != nil {
-						fmt.Printf("Greška prilikom čitanja SSTable.")
-					}
-					if string(sum.MaxKey) < minKey || string(sum.MinKey) > maxKey {
-						continue
-					}
-					var newOffset int
-					for _, entry := range sum.Entries {
-						if string(entry.Key) > minKey {
-							break
-						}
-						newOffset = int(entry.Offset)
-					}
-					newCursor, err := sstable.NewCursor(bm, sst, minKey, maxKey, newOffset, cfg.BlockSize, cfg.SSTableCompression, dict)
+					newCursor, err := sstable.NewCursor(bm, path, minKey, maxKey, cfg.BlockSize, cfg.SSTableCompression, dict)
 					if err != nil {
 						fmt.Printf("Greška prilikom formiranja kursora.")
 					}
