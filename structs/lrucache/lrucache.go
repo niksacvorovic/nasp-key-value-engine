@@ -48,12 +48,16 @@ func (cache *LRUCache) UpdateCache(key string, value []byte) {
 		node.value = value
 	} else {
 		newnode := CacheNode{key, value, cache.head, cache.head.prev}
+		cache.hash[key] = &newnode
 		cache.head.prev.next = &newnode
 		cache.head.prev = &newnode
 		if cache.length == cache.capacity {
 			cache.tail.next.next.prev = cache.tail
 			delete(cache.hash, cache.tail.next.key)
-			cache.tail.next = cache.tail.next.next
+			newnext := cache.tail.next.next
+			cache.tail.next.next = nil
+			cache.tail.next.prev = nil
+			cache.tail.next = newnext
 		} else {
 			cache.length++
 		}
@@ -65,6 +69,8 @@ func (cache *LRUCache) DeleteFromCache(key string) {
 	if exists {
 		node.next.prev = node.prev
 		node.prev.next = node.next
+		node.next = nil
+		node.prev = nil
 		delete(cache.hash, node.key)
 		cache.length--
 	}

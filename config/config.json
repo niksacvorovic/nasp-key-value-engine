@@ -7,7 +7,7 @@
 
     "BlockSize": 128,
     "BlockCacheSize": 20,
-    "LRUCacheSize":20,
+    "LRUCacheSize":3,
 
     "TokenRate": 100,
     "TokenInterval": 60,

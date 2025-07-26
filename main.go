@@ -280,8 +280,6 @@ func main() {
 				value, deleted, found = memtableInstances[i].Get(key)
 				if found && !deleted {
 					fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(key), utils.MaybeQuote(string(value)))
-					// Zapis u keš
-					lru.UpdateCache(key, value)
 					break
 				}
 			}
@@ -306,6 +304,7 @@ func main() {
 			record = utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 			if record != nil {
 				found = true
+				lru.UpdateCache(string(record.Key), record.Value)
 				fmt.Printf("Pronađena vrednost: [%s -> %s]\n", utils.MaybeQuote(string(record.Key)), utils.MaybeQuote(string(record.Value)))
 			}
 			if found {
