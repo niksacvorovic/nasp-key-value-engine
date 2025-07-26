@@ -84,21 +84,20 @@ func NewCursor(bm *blockmanager.BlockManager, path string, minKey string, maxKey
 
 // SSTableCursor se inicijalizuje s vrednošču koja ili pripada opsegu ili je prva pre opsega
 func (sc *SSTableCursor) Seek(seekKey string) bool {
-	var first *Record
 	var offsetDelta int
 	var err error
 	if sc.sst.SingleSSTable {
-		first, offsetDelta, err = ReadRecordAtOffsetSingleFile(sc.bm, sc.sst.SingleFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
+		sc.current, offsetDelta, err = ReadRecordAtOffsetSingleFile(sc.bm, sc.sst.SingleFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
 		if err != nil {
 			return false
 		}
 	} else {
-		first, offsetDelta, err = ReadRecordAtOffset(sc.bm, sc.sst.DataFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
+		sc.current, offsetDelta, err = ReadRecordAtOffset(sc.bm, sc.sst.DataFilePath, int64(sc.offset), sc.blockSize, sc.compression, sc.dict)
 		if err != nil {
 			return false
 		}
 	}
-	if string(first.Key) < sc.minKey {
+	if string(sc.current.Key) < sc.minKey {
 		sc.offset += offsetDelta
 	}
 	return true
