@@ -487,7 +487,12 @@ func main() {
 				}
 			}
 
-			// 2. ako nije u memtable, idi u SSTable
+			// 2. ako nije u memtable, idi u cache
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
+
+			// 3. ako nije u cache, idi u SSTable
 			if !found || deleted {
 				maxLevel := byte(0)
 				for level := range lsm {
@@ -499,6 +504,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -528,6 +534,12 @@ func main() {
 				}
 			}
 
+			// Cache
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.UpdateCache(key, value)
+			}
+
 			fmt.Println("Element dodat u Bloom filter.")
 
 		case "BLOOM_CHECK":
@@ -549,6 +561,9 @@ func main() {
 					break
 				}
 			}
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
 
 			if (!found || deleted) && !deleted {
 				maxLevel := byte(0)
@@ -561,6 +576,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -598,6 +614,11 @@ func main() {
 				if err != nil {
 					fmt.Println("Greska pri pisanju SSTable:", err)
 				}
+			}
+
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.DeleteFromCache(key)
 			}
 
 			fmt.Println("Bloom filter obrisan:", name)
@@ -660,6 +681,10 @@ func main() {
 				}
 			}
 
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
+
 			if !found || deleted {
 				maxLevel := byte(0)
 				for level := range lsm {
@@ -671,6 +696,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -702,6 +728,11 @@ func main() {
 				}
 			}
 
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.UpdateCache(key, value)
+			}
+
 			fmt.Println("Element dodat u CMS:", elem)
 
 		case "CMS_COUNT":
@@ -724,6 +755,10 @@ func main() {
 				}
 			}
 
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
+
 			if !found || deleted {
 				maxLevel := byte(0)
 				for level := range lsm {
@@ -735,6 +770,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -773,6 +809,10 @@ func main() {
 				if err != nil {
 					fmt.Println("Greska pri pisanju SSTable:", err)
 				}
+			}
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.DeleteFromCache(key)
 			}
 			fmt.Println("Count-Min Sketch obrisan:", name)
 
@@ -833,6 +873,10 @@ func main() {
 				}
 			}
 
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
+
 			if !found || deleted {
 				maxLevel := byte(0)
 				for level := range lsm {
@@ -844,6 +888,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -877,6 +922,11 @@ func main() {
 				}
 			}
 
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.UpdateCache(key, value)
+			}
+
 			fmt.Println("Element dodat u HLL:", elem)
 
 		case "HLL_COUNT":
@@ -898,6 +948,10 @@ func main() {
 				}
 			}
 
+			if !found {
+				data, found = lru.CheckCache(key)
+			}
+
 			if !found || deleted {
 				maxLevel := byte(0)
 				for level := range lsm {
@@ -909,6 +963,7 @@ func main() {
 				record := utils.ReadFromDisk(key, maxLevel, lsm, cfg, bm, dict)
 				if record != nil {
 					data = record.Value
+					lru.UpdateCache(key, data)
 				}
 			}
 
@@ -948,7 +1003,10 @@ func main() {
 					fmt.Println("Greska pri pisanju SSTable:", err)
 				}
 			}
-
+			_, inCache := lru.CheckCache(key)
+			if inCache {
+				lru.DeleteFromCache(key)
+			}
 			fmt.Println("HLL obrisan:", name)
 
 		// -----------------------------------
@@ -1023,6 +1081,14 @@ func main() {
 				}
 			}
 
+			// Ako nije nadjeno, idi u Cache
+			if !found1 {
+				data1, found1 = lru.CheckCache(key1)
+			}
+			if !found2 {
+				data2, found2 = lru.CheckCache(key2)
+			}
+
 			// Ako nije nadjeno, idi u SSTable
 			if (!found1 || deleted1) || (!found2 || deleted2) {
 				maxLevel := byte(0)
@@ -1036,14 +1102,16 @@ func main() {
 					record1 := utils.ReadFromDisk(key1, maxLevel, lsm, cfg, bm, dict)
 					if record1 != nil {
 						data1 = record1.Value
+						lru.UpdateCache(key1, data1)
 					}
 
 				}
 
 				if !found2 || deleted2 {
-					record1 := utils.ReadFromDisk(key1, maxLevel, lsm, cfg, bm, dict)
-					if record1 != nil {
-						data1 = record1.Value
+					record2 := utils.ReadFromDisk(key1, maxLevel, lsm, cfg, bm, dict)
+					if record2 != nil {
+						data2 = record2.Value
+						lru.UpdateCache(key2, data2)
 					}
 				}
 			}
