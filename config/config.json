@@ -1,7 +1,7 @@
 {
     "MaxMemtableSize": 5,
     "MemtableNum": 2,
-    "MemtableStruct": "skipList", 
+    "MemtableStruct": "hashMap", 
     "SkipListLevelNum": 5,
     "BTreeDegree":2,
 
@@ -13,7 +13,7 @@
     "TokenInterval": 60,
     
     "WalMaxRecordsPerSegment": 50,
-    "WalBlocksPerSegment": 1,
+    "WalBlocksPerSegment": 3,
 
     "SummaryStep": 4,
     "SSTableSingleFile": true,

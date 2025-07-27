@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -98,18 +99,37 @@ func main() {
 		fmt.Println("Greška pri čitanju:", err)
 	}
 
-	// Dodavanje WAL zapisa u Memtabele
-	for w, records := range recordMap {
-		for _, rec := range records {
-			// Dodavanje zapisa u memtable
-			memtableInstances[mtIndex].Add(rec.Timestamp, rec.Tombstone, string(rec.Key), rec.Value)
+	// Određivanje najstarijeg i najnovijeg indeksa i čitanje WAL segmenata redom
+	if len(recordMap) != 0 {
 
-			// Postavljanje watermarka za svaki Memtable
-			memtableInstances[mtIndex].SetWatermark(w)
+		var minWalIndex uint32 = math.MaxUint32
+		var maxWalIndex uint32 = 0
 
-			// Provera da li je trenutni Memtable pun
-			if memtableInstances[mtIndex].IsFull() {
-				mtIndex = (mtIndex + 1) % cfg.MemtableNum
+		for i := range recordMap {
+			if i < minWalIndex {
+				minWalIndex = i
+			}
+			if i > maxWalIndex {
+				maxWalIndex = i
+			}
+		}
+		// Dodavanje WAL zapisa u Memtabele
+		for i := minWalIndex; i <= maxWalIndex; i++ {
+			records, ok := recordMap[i]
+			if !ok {
+				continue
+			}
+			for _, rec := range records {
+				// Dodavanje zapisa u memtable
+				memtableInstances[mtIndex].Add(rec.Timestamp, rec.Tombstone, string(rec.Key), rec.Value)
+
+				// Postavljanje watermarka za svaki Memtable
+				memtableInstances[mtIndex].SetWatermark(i)
+
+				// Provera da li je trenutni Memtable pun
+				if memtableInstances[mtIndex].IsFull() {
+					mtIndex = (mtIndex + 1) % cfg.MemtableNum
+				}
 			}
 		}
 	}

@@ -325,7 +325,7 @@ func (w *WAL) ReadRecords() (map[uint32][]Record, error) {
 			}
 
 			// Ako je preostalo dovoljno prostora za header, čitaj zapis (u suprotnom znamo da je ostatak bloka prazan)
-			for len(block)-seek > 38 {
+			for len(block)-seek >= 38 {
 				newRecord := Record{}
 				newseek, end := newRecord.BytesToRecord(&block, seek)
 				if end {

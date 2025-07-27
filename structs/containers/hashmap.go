@@ -31,7 +31,7 @@ func (m *HashMapMemtable) Add(ts [16]byte, tombstone bool, key string, value []b
 
 // Vraca true ako je memtable pun, a u suprotnom false
 func (m *HashMapMemtable) IsFull() bool {
-	return len(m.data) > m.maxSize
+	return len(m.data) == m.maxSize
 }
 
 // Delete uklanja par kljuc-vrednost iz HashMapMemtable-a
