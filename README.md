@@ -2,7 +2,7 @@
 Grupni projekat iz predmeta ,,Napredni algoritmi i strukture podataka" 
 
 STRUKTURA PROJEKTA
-root
+```root
 ├── config
 │ ├── config.go 
 │ └── config.json 
@@ -39,4 +39,4 @@ root
 │   └── wal.go
 ├── utils
 │ └── utils.go
-└── main.go
+└── main.go```
