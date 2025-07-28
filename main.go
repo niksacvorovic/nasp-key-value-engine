@@ -1504,6 +1504,7 @@ func main() {
 					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}
 			}
+			fmt.Printf("Izlaz iz iterate petlje.\n")
 
 			// Zatvori multicursor
 			mc.Close()
@@ -1629,6 +1630,7 @@ func main() {
 					fmt.Println("Nepoznata komanda. Upotrebite NEXT ili STOP")
 				}
 			}
+			fmt.Printf("Izlaz iz iterate petlje.\n")
 
 			// Zatvori multicursor
 			mc.Close()
