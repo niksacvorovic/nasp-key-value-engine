@@ -147,6 +147,24 @@ func calculateCRC(record Record) uint32 {
 	return crc32.ChecksumIEEE(buffer.Bytes())
 }
 
+// calculate CRC računa CRC32 (IEEE) za kompresovane zapise
+func calculateCompressedCRC(record Record, dict *Dictionary) uint32 {
+	buf := &bytes.Buffer{}
+	buf.Write(record.Timestamp[:])
+
+	// Tombstone (1B)
+	if record.Tombstone {
+		buf.WriteByte(1)
+		WriteUvarint(buf, dict.strToID[string(record.Key)]) // Samo ID ključa
+	} else {
+		buf.WriteByte(0)
+		WriteUvarint(buf, dict.strToID[string(record.Key)]) // ID ključa
+		WriteUvarint(buf, uint64(len(record.Value)))        // Varint dužina vrednosti
+		buf.Write(record.Value)                             // Vrednost
+	}
+	return crc32.ChecksumIEEE(buf.Bytes())
+}
+
 // WriteUvarint upisuje uint64 vrednost koristeci varijabilni enkoding
 func WriteUvarint(buf *bytes.Buffer, val uint64) {
 	b := make([]byte, binary.MaxVarintLen64)
@@ -472,7 +490,7 @@ func ReadRecordAtOffset(bm *blockmanager.BlockManager, path string, offs int64, 
 			rec.Key = []byte(keyStr)
 			total := int(valStart + int64(valSize) - offs)
 			// CRC provera
-			if calculateCRC(*rec) != rec.CRC {
+			if calculateCompressedCRC(*rec, dict) != rec.CRC {
 				return nil, total, errors.New("CRC mismatch – corrupted record")
 			}
 			return rec, total, nil
