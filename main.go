@@ -332,7 +332,7 @@ func main() {
 			}
 
 			if !found {
-				fmt.Printf("Nije pronadjena vrednost za kljucc: [%s]\n", utils.MaybeQuote(key))
+				fmt.Printf("Nije pronadjena vrednost za kljuc: [%s]\n", utils.MaybeQuote(key))
 			}
 
 		// --------------------------------------------------------------------------------------------------------------------------
