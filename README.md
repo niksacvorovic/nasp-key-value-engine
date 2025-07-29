@@ -66,7 +66,7 @@ U nastavku su predviđena mjesta za slike (screenshote) koje prikazuju funkciona
 
 ---
 
-### 📝 Prefix scan komanda
+### 🔍 Prefix scan komanda
 
 ![PREFIX_SCAN operacija](docs/prefix_scan.png)
 
